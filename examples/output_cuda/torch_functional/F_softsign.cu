@@ -16,7 +16,7 @@ __device__ float abs_x[8][8];
 __device__ float one_plus_abs[8][8];
 __device__ float result[8][8];
 
-__global__ void F_softsign_kernel() {
+__global__ void F_softsign_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -33,9 +33,9 @@ __global__ void F_softsign_kernel() {
 
 }
 
-void F_softsign() {
+void F_softsign(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_softsign_kernel<<<grid, block>>>();
+    F_softsign_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

@@ -18,7 +18,7 @@ __device__ float exp_shifted[8][8];
 __device__ float row_sum[8][1];
 __device__ float result[8][8];
 
-__global__ void tensor_softmax_kernel() {
+__global__ void tensor_softmax_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -54,9 +54,9 @@ __global__ void tensor_softmax_kernel() {
 
 }
 
-void tensor_softmax() {
+void tensor_softmax(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_softmax_kernel<<<grid, block>>>();
+    tensor_softmax_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

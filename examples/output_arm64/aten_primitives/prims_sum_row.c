@@ -30,8 +30,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += x[_row][_col];
     }
-    result[_row][0] = _sum;
-}
+    result[_row][0] = _sum;}
 
 // FUSED LOOP (1 ops): output=TSTORE(result,0,0)
 for (int _row = 0; _row < 8; _row++) {

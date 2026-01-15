@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:

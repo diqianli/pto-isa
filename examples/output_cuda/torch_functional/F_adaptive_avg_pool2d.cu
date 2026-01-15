@@ -15,7 +15,7 @@ __device__ float x[8][8];
 __device__ float row_sum[8][1];
 __device__ float result[1][1];
 
-__global__ void F_adaptive_avg_pool2d_kernel() {
+__global__ void F_adaptive_avg_pool2d_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -33,14 +33,14 @@ __global__ void F_adaptive_avg_pool2d_kernel() {
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {
         result[_row][_col] = result[_row][_col] / 64.0f;
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void F_adaptive_avg_pool2d() {
+void F_adaptive_avg_pool2d(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_adaptive_avg_pool2d_kernel<<<grid, block>>>();
+    F_adaptive_avg_pool2d_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

@@ -19,7 +19,7 @@ __device__ float Q[8][8];
 __device__ float K[8][8];
 __device__ float V[8][8];
 
-__global__ void linear_projection_qkv_kernel() {
+__global__ void linear_projection_qkv_kernel(float* X_mem, float* WQ_mem, float* WK_mem, float* WV_mem, float* Q_mem, float* K_mem, float* V_mem) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -27,7 +27,7 @@ __global__ void linear_projection_qkv_kernel() {
 
     // FUSED (1 ops): X=TLOAD(...)
     if (_row < 8 && _col < 64) {
-        X[_row][_col] = X_mem[_row * 8 + _col];
+        X[_row][_col] = X_mem[_row * 64 + _col];
     }
 
     // FUSED (3 ops): W_Q=TLOAD(...); W_K=TLOAD(...); W_V=TLOAD(...)
@@ -52,9 +52,9 @@ __global__ void linear_projection_qkv_kernel() {
 
 }
 
-void linear_projection_qkv() {
+void linear_projection_qkv(float* X_mem, float* WQ_mem, float* WK_mem, float* WV_mem, float* Q_mem, float* K_mem, float* V_mem) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    linear_projection_qkv_kernel<<<grid, block>>>();
+    linear_projection_qkv_kernel<<<grid, block>>>(X_mem, WQ_mem, WK_mem, WV_mem, Q_mem, K_mem, V_mem);
     cudaDeviceSynchronize();
 }

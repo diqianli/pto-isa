@@ -14,7 +14,7 @@ namespace cg = cooperative_groups;
 __device__ float x[8][8];
 __device__ float result[8][8];
 
-__global__ void prims_neg_kernel() {
+__global__ void prims_neg_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -29,9 +29,9 @@ __global__ void prims_neg_kernel() {
 
 }
 
-void prims_neg() {
+void prims_neg(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    prims_neg_kernel<<<grid, block>>>();
+    prims_neg_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

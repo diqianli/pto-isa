@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -39,6 +37,8 @@ private:
 
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
+
+        // BARRIER: TMATMUL
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

@@ -18,7 +18,7 @@ __device__ float sq_diff[8][8];
 __device__ float row_sum[8][1];
 __device__ float result[8][1];
 
-__global__ void F_pairwise_distance_kernel() {
+__global__ void F_pairwise_distance_kernel(float* input1, float* input2, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -37,14 +37,14 @@ __global__ void F_pairwise_distance_kernel() {
     // FUSED (2 ops): result=TSQRT(...); output=TSTORE(...)
     if (_row < 8 && _col < 1) {
         result[_row][_col] = __fsqrt_rn(row_sum[_row][_col]);
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void F_pairwise_distance() {
+void F_pairwise_distance(float* input1, float* input2, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_pairwise_distance_kernel<<<grid, block>>>();
+    F_pairwise_distance_kernel<<<grid, block>>>(input1, input2, output);
     cudaDeviceSynchronize();
 }

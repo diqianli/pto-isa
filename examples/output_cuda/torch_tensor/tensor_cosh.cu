@@ -18,7 +18,7 @@ __device__ float exp_neg_x[8][8];
 __device__ float sum_val[8][8];
 __device__ float result[8][8];
 
-__global__ void tensor_cosh_kernel() {
+__global__ void tensor_cosh_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -37,9 +37,9 @@ __global__ void tensor_cosh_kernel() {
 
 }
 
-void tensor_cosh() {
+void tensor_cosh(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_cosh_kernel<<<grid, block>>>();
+    tensor_cosh_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

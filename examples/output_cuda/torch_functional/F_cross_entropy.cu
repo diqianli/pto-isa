@@ -23,7 +23,7 @@ __device__ float ce[8][8];
 __device__ float ce_row[8][1];
 __device__ float result[1][1];
 
-__global__ void F_cross_entropy_kernel() {
+__global__ void F_cross_entropy_kernel(float* input, float* target_mem, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -71,14 +71,14 @@ __global__ void F_cross_entropy_kernel() {
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {
         result[_row][_col] = result[_row][_col] / 8.0f;
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void F_cross_entropy() {
+void F_cross_entropy(float* input, float* target_mem, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_cross_entropy_kernel<<<grid, block>>>();
+    F_cross_entropy_kernel<<<grid, block>>>(input, target_mem, output);
     cudaDeviceSynchronize();
 }

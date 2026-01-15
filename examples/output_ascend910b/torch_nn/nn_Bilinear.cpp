@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -32,13 +30,17 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 4 loop overheads saved
+        // Loop fusion: 3 loop overheads saved
 
-        // FUSED (5 ops): TLOAD; TLOAD; TLOAD; TMUL; TSTORE
+        // FUSED (4 ops): TLOAD; TLOAD; TLOAD; TMUL
         // TLOAD: Operation
         // TLOAD: Operation
         // TLOAD: Operation
         Mul(product, x1, x2, 64);
+
+        // BARRIER: TMATMUL
+
+        // FUSED (1 ops): TSTORE
         // TSTORE: Operation
 
         outQueueY.EnQue(yLocal);

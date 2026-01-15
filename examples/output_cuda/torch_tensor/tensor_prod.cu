@@ -17,7 +17,7 @@ __device__ float row_sum[8][1];
 __device__ float total[1][1];
 __device__ float result[1][1];
 
-__global__ void tensor_prod_kernel() {
+__global__ void tensor_prod_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -36,14 +36,14 @@ __global__ void tensor_prod_kernel() {
     // FUSED (2 ops): result=TEXP(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {
         result[_row][_col] = __expf(total[_row][_col]);
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void tensor_prod() {
+void tensor_prod(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_prod_kernel<<<grid, block>>>();
+    tensor_prod_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

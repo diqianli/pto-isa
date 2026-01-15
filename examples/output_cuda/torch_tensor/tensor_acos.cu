@@ -22,7 +22,7 @@ __device__ float asin_val[8][8];
 __device__ float pi_half[8][8];
 __device__ float result[8][8];
 
-__global__ void tensor_acos_kernel() {
+__global__ void tensor_acos_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -45,9 +45,9 @@ __global__ void tensor_acos_kernel() {
 
 }
 
-void tensor_acos() {
+void tensor_acos(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_acos_kernel<<<grid, block>>>();
+    tensor_acos_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

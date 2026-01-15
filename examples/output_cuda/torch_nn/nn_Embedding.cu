@@ -15,7 +15,7 @@ __device__ float indices_onehot[8][64];
 __device__ float weight[64][8];
 __device__ float result[8][8];
 
-__global__ void nn_Embedding_kernel() {
+__global__ void nn_Embedding_kernel(float* indices_mem, float* weight_mem, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -23,13 +23,15 @@ __global__ void nn_Embedding_kernel() {
 
     // FUSED (1 ops): indices_onehot=TLOAD(...)
     if (_row < 8 && _col < 64) {
-        indices_onehot[_row][_col] = indices_mem[_row * 8 + _col];
+        indices_onehot[_row][_col] = indices_mem[_row * 64 + _col];
     }
 
     // FUSED (1 ops): weight=TLOAD(...)
     if (_row < 64 && _col < 8) {
         weight[_row][_col] = weight_mem[_row * 8 + _col];
     }
+
+    // BARRIER: TMATMUL
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {
@@ -38,9 +40,9 @@ __global__ void nn_Embedding_kernel() {
 
 }
 
-void nn_Embedding() {
+void nn_Embedding(float* indices_mem, float* weight_mem, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_Embedding_kernel<<<grid, block>>>();
+    nn_Embedding_kernel<<<grid, block>>>(indices_mem, weight_mem, output);
     cudaDeviceSynchronize();
 }

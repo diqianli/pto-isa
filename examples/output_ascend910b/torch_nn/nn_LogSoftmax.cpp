@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -39,13 +37,11 @@ private:
         Exp(exp_x, x, 64);
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // FUSED (1 ops): TLOG
         Ln(log_sum, sum_exp, 64);
 
         // BARRIER: TROWEXPANDSUB
-        // TROWEXPANDSUB: Barrier operation
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

@@ -14,7 +14,7 @@ namespace cg = cooperative_groups;
 __device__ float mask[8][8];
 __device__ float ones[8][8];
 
-__global__ void create_causal_mask_kernel() {
+__global__ void create_causal_mask_kernel(float* mask_mem) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -29,9 +29,9 @@ __global__ void create_causal_mask_kernel() {
 
 }
 
-void create_causal_mask() {
+void create_causal_mask(float* mask_mem) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    create_causal_mask_kernel<<<grid, block>>>();
+    create_causal_mask_kernel<<<grid, block>>>(mask_mem);
     cudaDeviceSynchronize();
 }

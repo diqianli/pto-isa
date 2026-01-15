@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -41,10 +39,8 @@ private:
         Mul(squared, diff, diff, 64);
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // BARRIER: TCOLSUM
-        // TCOLSUM: ReduceSum along columns
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, total_sum, 64.0f, 64);

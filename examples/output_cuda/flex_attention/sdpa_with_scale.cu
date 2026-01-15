@@ -22,7 +22,7 @@ __device__ float exp_scores[8][8];
 __device__ float attn[8][8];
 __device__ float output[8][8];
 
-__global__ void sdpa_with_scale_kernel() {
+__global__ void sdpa_with_scale_kernel(float* Q_mem, float* K_mem, float* V_mem, float* output_mem) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -69,9 +69,9 @@ __global__ void sdpa_with_scale_kernel() {
 
 }
 
-void sdpa_with_scale() {
+void sdpa_with_scale(float* Q_mem, float* K_mem, float* V_mem, float* output_mem) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    sdpa_with_scale_kernel<<<grid, block>>>();
+    sdpa_with_scale_kernel<<<grid, block>>>(Q_mem, K_mem, V_mem, output_mem);
     cudaDeviceSynchronize();
 }

@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -39,7 +37,6 @@ private:
         Mul(x_squared, x, x, 64);
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // FUSED (3 ops): TDIVS; TADDS; TSQRT
         Divs(mean_sq, mean_sq_sum, 8.0f, 64);

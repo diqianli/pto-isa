@@ -16,7 +16,7 @@ __device__ float relu_out[8][8];
 __device__ float six[8][8];
 __device__ float result[8][8];
 
-__global__ void nn_ReLU6_kernel() {
+__global__ void nn_ReLU6_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -33,9 +33,9 @@ __global__ void nn_ReLU6_kernel() {
 
 }
 
-void nn_ReLU6() {
+void nn_ReLU6(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_ReLU6_kernel<<<grid, block>>>();
+    nn_ReLU6_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

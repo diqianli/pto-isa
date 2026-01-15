@@ -36,8 +36,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += exp_x[_row][_col];
     }
-    sum_exp[_row][0] = _sum;
-}
+    sum_exp[_row][0] = _sum;}
 
 // FUSED LOOP (2 ops): result=TDIV(exp_x,sum_exp); output=TSTORE(result,0,0)
 for (int _row = 0; _row < 8; _row++) {

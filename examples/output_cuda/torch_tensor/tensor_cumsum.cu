@@ -15,7 +15,7 @@ __device__ float self[8][8];
 __device__ float row_sum[8][1];
 __device__ float result[8][8];
 
-__global__ void tensor_cumsum_kernel() {
+__global__ void tensor_cumsum_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -30,14 +30,14 @@ __global__ void tensor_cumsum_kernel() {
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 1) {
-        output[_row * 8 + _col] = row_sum[_row][_col];
+        output[_row * 1 + _col] = row_sum[_row][_col];
     }
 
 }
 
-void tensor_cumsum() {
+void tensor_cumsum(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_cumsum_kernel<<<grid, block>>>();
+    tensor_cumsum_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

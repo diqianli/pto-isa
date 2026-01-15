@@ -18,7 +18,7 @@ __device__ float exp_neg_x[8][8];
 __device__ float sum[8][8];
 __device__ float result[8][8];
 
-__global__ void aten_cosh_kernel() {
+__global__ void aten_cosh_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -37,9 +37,9 @@ __global__ void aten_cosh_kernel() {
 
 }
 
-void aten_cosh() {
+void aten_cosh(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    aten_cosh_kernel<<<grid, block>>>();
+    aten_cosh_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

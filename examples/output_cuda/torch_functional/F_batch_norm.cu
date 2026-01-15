@@ -18,7 +18,7 @@ __device__ float std[1][8];
 __device__ float centered[8][8];
 __device__ float result[8][8];
 
-__global__ void F_batch_norm_kernel() {
+__global__ void F_batch_norm_kernel(float* input, float* mean_mem, float* var_mem, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -51,9 +51,9 @@ __global__ void F_batch_norm_kernel() {
 
 }
 
-void F_batch_norm() {
+void F_batch_norm(float* input, float* mean_mem, float* var_mem, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_batch_norm_kernel<<<grid, block>>>();
+    F_batch_norm_kernel<<<grid, block>>>(input, mean_mem, var_mem, output);
     cudaDeviceSynchronize();
 }

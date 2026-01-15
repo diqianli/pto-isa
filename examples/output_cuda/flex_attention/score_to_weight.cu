@@ -17,7 +17,7 @@ __device__ float shifted[8][8];
 __device__ float exp_scores[8][8];
 __device__ float weights[8][8];
 
-__global__ void score_to_weight_kernel() {
+__global__ void score_to_weight_kernel(float* scores_mem, float* weights_mem) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -53,9 +53,9 @@ __global__ void score_to_weight_kernel() {
 
 }
 
-void score_to_weight() {
+void score_to_weight(float* scores_mem, float* weights_mem) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    score_to_weight_kernel<<<grid, block>>>();
+    score_to_weight_kernel<<<grid, block>>>(scores_mem, weights_mem);
     cudaDeviceSynchronize();
 }

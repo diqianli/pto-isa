@@ -17,7 +17,7 @@ __device__ float sum_exp[8][1];
 __device__ float log_sum[8][1];
 __device__ float result[8][8];
 
-__global__ void nn_LogSoftmax_kernel() {
+__global__ void nn_LogSoftmax_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -30,7 +30,6 @@ __global__ void nn_LogSoftmax_kernel() {
     }
 
     // BARRIER: TROWSUM
-    // TROWSUM: Requires warp reduction - not shown in simplified example
 
     // FUSED (1 ops): log_sum=TLOG(...)
     if (_row < 8 && _col < 1) {
@@ -38,7 +37,6 @@ __global__ void nn_LogSoftmax_kernel() {
     }
 
     // BARRIER: TROWEXPANDSUB
-    // TROWEXPANDSUB: Barrier operation
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {
@@ -47,9 +45,9 @@ __global__ void nn_LogSoftmax_kernel() {
 
 }
 
-void nn_LogSoftmax() {
+void nn_LogSoftmax(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_LogSoftmax_kernel<<<grid, block>>>();
+    nn_LogSoftmax_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

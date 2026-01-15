@@ -18,7 +18,7 @@ __device__ float quot[8][8];
 __device__ float scaled[8][8];
 __device__ float result[8][8];
 
-__global__ void tensor_addcdiv_kernel() {
+__global__ void tensor_addcdiv_kernel(float* input_self, float* input_t1, float* input_t2, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -37,9 +37,9 @@ __global__ void tensor_addcdiv_kernel() {
 
 }
 
-void tensor_addcdiv() {
+void tensor_addcdiv(float* input_self, float* input_t1, float* input_t2, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_addcdiv_kernel<<<grid, block>>>();
+    tensor_addcdiv_kernel<<<grid, block>>>(input_self, input_t1, input_t2, output);
     cudaDeviceSynchronize();
 }

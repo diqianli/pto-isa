@@ -18,7 +18,7 @@ __device__ float six[8][8];
 __device__ float relu6_out[8][8];
 __device__ float result[8][8];
 
-__global__ void nn_Hardsigmoid_kernel() {
+__global__ void nn_Hardsigmoid_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -37,9 +37,9 @@ __global__ void nn_Hardsigmoid_kernel() {
 
 }
 
-void nn_Hardsigmoid() {
+void nn_Hardsigmoid(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_Hardsigmoid_kernel<<<grid, block>>>();
+    nn_Hardsigmoid_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

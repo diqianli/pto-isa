@@ -40,8 +40,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += x_squared[_row][_col];
     }
-    mean_sq_sum[_row][0] = _sum;
-}
+    mean_sq_sum[_row][0] = _sum;}
 
 // FUSED LOOP (3 ops): mean_sq=TDIVS(mean_sq_sum,8.0f); mean_sq_eps=TADDS(mean_sq,1e-05f); rms=TSQRT(mean_sq_eps)
 float32x4_t _vs4 = vdupq_n_f32(8.0f);

@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -38,19 +36,16 @@ private:
         // TLOAD: Operation
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // FUSED (1 ops): TDIVS
         Divs(mean, row_sum, 8.0f, 64);
 
         // BARRIER: TROWEXPANDSUB
-        // TROWEXPANDSUB: Barrier operation
 
         // FUSED (1 ops): TMUL
         Mul(squared, x_minus_mean, x_minus_mean, 64);
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // FUSED (3 ops): TDIVS; TADDS; TSQRT
         Divs(variance, var_sum, 8.0f, 64);
@@ -58,7 +53,6 @@ private:
         Sqrt(std, var_eps, 64);
 
         // BARRIER: TROWEXPANDDIV
-        // TROWEXPANDDIV: Barrier operation
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

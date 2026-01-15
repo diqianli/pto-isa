@@ -71,8 +71,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += smooth[_row][_col];
     }
-    row_sum[_row][0] = _sum;
-}
+    row_sum[_row][0] = _sum;}
 
 // TCOLSUM: total_sum = colsum(row_sum)
 for (int _col = 0; _col < 1; _col++) {
@@ -80,8 +79,7 @@ for (int _col = 0; _col < 1; _col++) {
     for (int _row = 0; _row < 8; _row++) {
         _sum += row_sum[_row][_col];
     }
-    total_sum[0][_col] = _sum;
-}
+    total_sum[0][_col] = _sum;}
 
 // FUSED LOOP (2 ops): result=TDIVS(total_sum,64.0f); output=TSTORE(result,0,0)
 float32x4_t _vs19 = vdupq_n_f32(64.0f);

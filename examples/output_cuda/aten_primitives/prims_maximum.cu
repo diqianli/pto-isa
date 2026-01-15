@@ -15,7 +15,7 @@ __device__ float a[8][8];
 __device__ float b[8][8];
 __device__ float result[8][8];
 
-__global__ void prims_maximum_kernel() {
+__global__ void prims_maximum_kernel(float* input_a, float* input_b, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -31,9 +31,9 @@ __global__ void prims_maximum_kernel() {
 
 }
 
-void prims_maximum() {
+void prims_maximum(float* input_a, float* input_b, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    prims_maximum_kernel<<<grid, block>>>();
+    prims_maximum_kernel<<<grid, block>>>(input_a, input_b, output);
     cudaDeviceSynchronize();
 }

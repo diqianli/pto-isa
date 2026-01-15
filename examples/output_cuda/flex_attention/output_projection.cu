@@ -15,7 +15,7 @@ __device__ float attn_out[8][8];
 __device__ float W_O[8][64];
 __device__ float output[8][64];
 
-__global__ void output_projection_kernel() {
+__global__ void output_projection_kernel(float* attn_mem, float* WO_mem, float* output_mem) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -28,21 +28,21 @@ __global__ void output_projection_kernel() {
 
     // FUSED (1 ops): W_O=TLOAD(...)
     if (_row < 8 && _col < 64) {
-        W_O[_row][_col] = WO_mem[_row * 8 + _col];
+        W_O[_row][_col] = WO_mem[_row * 64 + _col];
     }
 
     // BARRIER: TMATMUL
 
     // FUSED (1 ops): output_mem=TSTORE(...)
     if (_row < 8 && _col < 64) {
-        output_mem[_row * 8 + _col] = output[_row][_col];
+        output_mem[_row * 64 + _col] = output[_row][_col];
     }
 
 }
 
-void output_projection() {
+void output_projection(float* attn_mem, float* WO_mem, float* output_mem) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    output_projection_kernel<<<grid, block>>>();
+    output_projection_kernel<<<grid, block>>>(attn_mem, WO_mem, output_mem);
     cudaDeviceSynchronize();
 }

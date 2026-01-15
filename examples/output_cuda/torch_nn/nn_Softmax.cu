@@ -16,7 +16,7 @@ __device__ float exp_x[8][8];
 __device__ float sum_exp[8][1];
 __device__ float result[8][8];
 
-__global__ void nn_Softmax_kernel() {
+__global__ void nn_Softmax_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -29,7 +29,6 @@ __global__ void nn_Softmax_kernel() {
     }
 
     // BARRIER: TROWSUM
-    // TROWSUM: Requires warp reduction - not shown in simplified example
 
     // FUSED (2 ops): result=TDIV(...); output=TSTORE(...)
     if (_row < 8 && _col < 8) {
@@ -39,9 +38,9 @@ __global__ void nn_Softmax_kernel() {
 
 }
 
-void nn_Softmax() {
+void nn_Softmax(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_Softmax_kernel<<<grid, block>>>();
+    nn_Softmax_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

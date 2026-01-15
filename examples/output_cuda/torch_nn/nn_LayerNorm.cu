@@ -22,7 +22,7 @@ __device__ float var_eps[8][1];
 __device__ float std[8][1];
 __device__ float result[8][8];
 
-__global__ void nn_LayerNorm_kernel() {
+__global__ void nn_LayerNorm_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -34,7 +34,6 @@ __global__ void nn_LayerNorm_kernel() {
     }
 
     // BARRIER: TROWSUM
-    // TROWSUM: Requires warp reduction - not shown in simplified example
 
     // FUSED (1 ops): mean=TDIVS(...)
     if (_row < 8 && _col < 1) {
@@ -42,7 +41,6 @@ __global__ void nn_LayerNorm_kernel() {
     }
 
     // BARRIER: TROWEXPANDSUB
-    // TROWEXPANDSUB: Barrier operation
 
     // FUSED (1 ops): squared=TMUL(...)
     if (_row < 8 && _col < 8) {
@@ -50,7 +48,6 @@ __global__ void nn_LayerNorm_kernel() {
     }
 
     // BARRIER: TROWSUM
-    // TROWSUM: Requires warp reduction - not shown in simplified example
 
     // FUSED (3 ops): variance=TDIVS(...); var_eps=TADDS(...); std=TSQRT(...)
     if (_row < 8 && _col < 1) {
@@ -60,7 +57,6 @@ __global__ void nn_LayerNorm_kernel() {
     }
 
     // BARRIER: TROWEXPANDDIV
-    // TROWEXPANDDIV: Barrier operation
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {
@@ -69,9 +65,9 @@ __global__ void nn_LayerNorm_kernel() {
 
 }
 
-void nn_LayerNorm() {
+void nn_LayerNorm(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_LayerNorm_kernel<<<grid, block>>>();
+    nn_LayerNorm_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

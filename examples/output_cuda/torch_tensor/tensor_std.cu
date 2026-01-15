@@ -22,7 +22,7 @@ __device__ float var_total[1][1];
 __device__ float var[1][1];
 __device__ float result[1][1];
 
-__global__ void tensor_std_kernel() {
+__global__ void tensor_std_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -57,14 +57,14 @@ __global__ void tensor_std_kernel() {
     if (_row < 1 && _col < 1) {
         var[_row][_col] = var_total[_row][_col] / 64.0f;
         result[_row][_col] = __fsqrt_rn(var[_row][_col]);
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void tensor_std() {
+void tensor_std(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_std_kernel<<<grid, block>>>();
+    tensor_std_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

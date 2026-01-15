@@ -37,8 +37,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += exp_x[_row][_col];
     }
-    sum_exp[_row][0] = _sum;
-}
+    sum_exp[_row][0] = _sum;}
 
 // FUSED LOOP (1 ops): log_sum=TLOG(sum_exp)
 for (int _row = 0; _row < 8; _row++) {
@@ -60,8 +59,7 @@ for (int _row = 0; _row < 8; _row++) {
     float _broadcast_val = log_sum[_row][0];
     for (int _col = 0; _col < 8; _col++) {
         result[_row][_col] = x[_row][_col] - _broadcast_val;
-    }
-}
+    }}
 
 // FUSED LOOP (1 ops): output=TSTORE(result,0,0)
 for (int _row = 0; _row < 8; _row++) {

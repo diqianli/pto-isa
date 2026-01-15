@@ -15,7 +15,7 @@ __device__ float x[8][8];
 __device__ float sum_result[8][1];
 __device__ float result[8][1];
 
-__global__ void aten_mean_row_kernel() {
+__global__ void aten_mean_row_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -27,19 +27,18 @@ __global__ void aten_mean_row_kernel() {
     }
 
     // BARRIER: TROWSUM
-    // TROWSUM: Requires warp reduction - not shown in simplified example
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 8 && _col < 1) {
         result[_row][_col] = sum_result[_row][_col] / 8.0f;
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void aten_mean_row() {
+void aten_mean_row(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    aten_mean_row_kernel<<<grid, block>>>();
+    aten_mean_row_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

@@ -19,7 +19,7 @@ __device__ float relu6_out[8][8];
 __device__ float scaled[8][8];
 __device__ float result[8][8];
 
-__global__ void nn_Hardswish_kernel() {
+__global__ void nn_Hardswish_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -39,9 +39,9 @@ __global__ void nn_Hardswish_kernel() {
 
 }
 
-void nn_Hardswish() {
+void nn_Hardswish(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    nn_Hardswish_kernel<<<grid, block>>>();
+    nn_Hardswish_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

@@ -15,7 +15,7 @@ __device__ float self[8][8];
 __device__ float mat2[8][8];
 __device__ float result[8][8];
 
-__global__ void tensor_mm_kernel() {
+__global__ void tensor_mm_kernel(float* input_self, float* input_mat2, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -36,9 +36,9 @@ __global__ void tensor_mm_kernel() {
 
 }
 
-void tensor_mm() {
+void tensor_mm(float* input_self, float* input_mat2, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_mm_kernel<<<grid, block>>>();
+    tensor_mm_kernel<<<grid, block>>>(input_self, input_mat2, output);
     cudaDeviceSynchronize();
 }

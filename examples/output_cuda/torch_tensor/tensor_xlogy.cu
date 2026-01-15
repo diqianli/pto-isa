@@ -16,7 +16,7 @@ __device__ float other[8][8];
 __device__ float log_other[8][8];
 __device__ float result[8][8];
 
-__global__ void tensor_xlogy_kernel() {
+__global__ void tensor_xlogy_kernel(float* input_self, float* input_other, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -33,9 +33,9 @@ __global__ void tensor_xlogy_kernel() {
 
 }
 
-void tensor_xlogy() {
+void tensor_xlogy(float* input_self, float* input_other, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_xlogy_kernel<<<grid, block>>>();
+    tensor_xlogy_kernel<<<grid, block>>>(input_self, input_other, output);
     cudaDeviceSynchronize();
 }

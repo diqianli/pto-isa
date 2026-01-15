@@ -18,7 +18,7 @@ __device__ float one_plus[8][8];
 __device__ float softplus[8][8];
 __device__ float result[8][8];
 
-__global__ void F_logsigmoid_kernel() {
+__global__ void F_logsigmoid_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -37,9 +37,9 @@ __global__ void F_logsigmoid_kernel() {
 
 }
 
-void F_logsigmoid() {
+void F_logsigmoid(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_logsigmoid_kernel<<<grid, block>>>();
+    F_logsigmoid_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

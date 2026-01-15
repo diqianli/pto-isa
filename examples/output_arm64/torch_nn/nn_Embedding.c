@@ -39,6 +39,14 @@ for (int _row = 0; _row < 64; _row++) {
     }
 }
 
+// TMATMUL: result = indices_onehot @ weight
+for (int _i = 0; _i < 8; _i++) {
+    for (int _j = 0; _j < 8; _j++) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 64; _k++) {
+            _sum += indices_onehot[_i][_k] * weight[_k][_j];}
+        result[_i][_j] = _sum;}}
+
 // FUSED LOOP (1 ops): output=TSTORE(result,0,0)
 for (int _row = 0; _row < 8; _row++) {
     int _col;

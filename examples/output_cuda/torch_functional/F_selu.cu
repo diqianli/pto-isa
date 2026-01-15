@@ -21,7 +21,7 @@ __device__ float neg_part[8][8];
 __device__ float elu_result[8][8];
 __device__ float result[8][8];
 
-__global__ void F_selu_kernel() {
+__global__ void F_selu_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -43,9 +43,9 @@ __global__ void F_selu_kernel() {
 
 }
 
-void F_selu() {
+void F_selu(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    F_selu_kernel<<<grid, block>>>();
+    F_selu_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

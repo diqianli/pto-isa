@@ -1682,6 +1682,10 @@ def _gen_cuda_single_op(instr, tile_info):
         if not src1.endswith("f") and not src1.replace(".", "").replace("-", "").isdigit():
             src1 = f"{src1}[_row][_col]"
     
+    # Get tile shape for memory operations
+    dst_info = tile_info.get(instr.dst)
+    cols = dst_info.cols if dst_info else 8
+    
     if op == "TADD": return f"{dst} = {src0} + {src1};"
     elif op == "TSUB": return f"{dst} = {src0} - {src1};"
     elif op == "TMUL": return f"{dst} = {src0} * {src1};"
@@ -1701,8 +1705,11 @@ def _gen_cuda_single_op(instr, tile_info):
     elif op == "TMULS": return f"{dst} = {src0} * {src1};"
     elif op == "TDIVS": return f"{dst} = {src0} / {src1};"
     elif op == "TEXPANDS": return f"{dst} = {instr.operands[0]};"
-    elif op == "TLOAD": return f"{dst} = {instr.operands[0]}[_row * 8 + _col];"
-    elif op == "TSTORE": return f"{instr.dst}[_row * 8 + _col] = {instr.operands[0]}[_row][_col];"
+    elif op == "TLOAD": return f"{dst} = {instr.operands[0]}[_row * {cols} + _col];"
+    elif op == "TSTORE": 
+        src_info = tile_info.get(instr.operands[0])
+        src_cols = src_info.cols if src_info else cols
+        return f"{instr.dst}[_row * {src_cols} + _col] = {instr.operands[0]}[_row][_col];"
     return f"// Unknown op: {op}"
 
 
@@ -1787,12 +1794,26 @@ class MultiBackendCodeGenerator:
         
         lines = [f"// PTO Program: {program.name}", cuda_generate_header()]
         
+        # Declare tiles as __device__ arrays
         for name, info in tile_info.items():
             c_type = CUDA_TYPE_MAP.get(info.dtype, "float")
             lines.append(f"__device__ {c_type} {name}[{info.rows}][{info.cols}];")
         lines.append("")
         
-        lines.append(f"__global__ void {program.name}_kernel() {{")
+        # Collect memory references for kernel parameters
+        memref_params = []
+        memref_types = {}
+        for name, memref_type in program.memref_declarations.items():
+            c_type = CUDA_TYPE_MAP.get(memref_type.element_type.value, "float")
+            memref_params.append(f"{c_type}* {name}")
+            memref_types[name] = c_type
+        
+        # Generate kernel signature with memory reference parameters
+        if memref_params:
+            kernel_params = ", ".join(memref_params)
+            lines.append(f"__global__ void {program.name}_kernel({kernel_params}) {{")
+        else:
+            lines.append(f"__global__ void {program.name}_kernel() {{")
         lines.append("    int _row = threadIdx.y + blockIdx.y * blockDim.y;")
         lines.append("    int _col = threadIdx.x + blockIdx.x * blockDim.x;\n")
         
@@ -1814,11 +1835,22 @@ class MultiBackendCodeGenerator:
                     lines.append(f"    // BARRIER: {instr.opcode}\n")
         
         lines.append("}\n")
-        lines.append(f"void {program.name}() {{")
-        lines.append("    dim3 block(8, 8);")
-        lines.append("    dim3 grid(1, 1);")
-        lines.append(f"    {program.name}_kernel<<<grid, block>>>();")
-        lines.append("    cudaDeviceSynchronize();\n}")
+        
+        # Generate host wrapper function with memory reference parameters
+        if memref_params:
+            wrapper_params = ", ".join(memref_params)
+            kernel_args = ", ".join(program.memref_declarations.keys())
+            lines.append(f"void {program.name}({wrapper_params}) {{")
+            lines.append("    dim3 block(8, 8);")
+            lines.append("    dim3 grid(1, 1);")
+            lines.append(f"    {program.name}_kernel<<<grid, block>>>({kernel_args});")
+            lines.append("    cudaDeviceSynchronize();\n}")
+        else:
+            lines.append(f"void {program.name}() {{")
+            lines.append("    dim3 block(8, 8);")
+            lines.append("    dim3 grid(1, 1);")
+            lines.append(f"    {program.name}_kernel<<<grid, block>>>();")
+            lines.append("    cudaDeviceSynchronize();\n}")
         
         return "\n".join(lines)
     

@@ -24,7 +24,7 @@ __device__ float row_sum[8][1];
 __device__ float attention_weights[8][8];
 __device__ float output[8][8];
 
-__global__ void scaled_dot_product_attention_kernel() {
+__global__ void scaled_dot_product_attention_kernel(float* Q_mem, float* K_mem, float* V_mem, float* output_mem) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -71,9 +71,9 @@ __global__ void scaled_dot_product_attention_kernel() {
 
 }
 
-void scaled_dot_product_attention() {
+void scaled_dot_product_attention(float* Q_mem, float* K_mem, float* V_mem, float* output_mem) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    scaled_dot_product_attention_kernel<<<grid, block>>>();
+    scaled_dot_product_attention_kernel<<<grid, block>>>(Q_mem, K_mem, V_mem, output_mem);
     cudaDeviceSynchronize();
 }

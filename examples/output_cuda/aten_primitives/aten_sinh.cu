@@ -16,7 +16,7 @@ __device__ float x_squared[8][8];
 __device__ float term[8][8];
 __device__ float result[8][8];
 
-__global__ void aten_sinh_kernel() {
+__global__ void aten_sinh_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -45,9 +45,9 @@ __global__ void aten_sinh_kernel() {
 
 }
 
-void aten_sinh() {
+void aten_sinh(float* input, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    aten_sinh_kernel<<<grid, block>>>();
+    aten_sinh_kernel<<<grid, block>>>(input, output);
     cudaDeviceSynchronize();
 }

@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -40,23 +38,19 @@ private:
         Exp(exp_pred, pred, 64);
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // FUSED (1 ops): TLOG
         Ln(log_sum, sum_exp, 64);
 
         // BARRIER: TROWEXPANDSUB
-        // TROWEXPANDSUB: Barrier operation
 
         // FUSED (2 ops): TMUL; TNEG
         Mul(weighted, target, log_softmax, 64);
         Neg(neg_weighted, weighted, 64);
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // BARRIER: TCOLSUM
-        // TCOLSUM: ReduceSum along columns
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, total_sum, 8.0f, 64);

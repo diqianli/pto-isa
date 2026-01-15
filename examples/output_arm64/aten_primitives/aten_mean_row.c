@@ -31,8 +31,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += x[_row][_col];
     }
-    sum_result[_row][0] = _sum;
-}
+    sum_result[_row][0] = _sum;}
 
 // FUSED LOOP (2 ops): result=TDIVS(sum_result,8.0f); output=TSTORE(result,0,0)
 float32x4_t _vs1 = vdupq_n_f32(8.0f);

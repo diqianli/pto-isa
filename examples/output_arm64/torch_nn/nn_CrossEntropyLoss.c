@@ -46,8 +46,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += exp_pred[_row][_col];
     }
-    sum_exp[_row][0] = _sum;
-}
+    sum_exp[_row][0] = _sum;}
 
 // FUSED LOOP (1 ops): log_sum=TLOG(sum_exp)
 for (int _row = 0; _row < 8; _row++) {
@@ -69,8 +68,7 @@ for (int _row = 0; _row < 8; _row++) {
     float _broadcast_val = log_sum[_row][0];
     for (int _col = 0; _col < 8; _col++) {
         log_softmax[_row][_col] = pred[_row][_col] - _broadcast_val;
-    }
-}
+    }}
 
 // FUSED LOOP (2 ops): weighted=TMUL(target,log_softmax); neg_weighted=TNEG(weighted)
 for (int _row = 0; _row < 8; _row++) {
@@ -98,8 +96,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += neg_weighted[_row][_col];
     }
-    row_sum[_row][0] = _sum;
-}
+    row_sum[_row][0] = _sum;}
 
 // TCOLSUM: total_sum = colsum(row_sum)
 for (int _col = 0; _col < 1; _col++) {
@@ -107,8 +104,7 @@ for (int _col = 0; _col < 1; _col++) {
     for (int _row = 0; _row < 8; _row++) {
         _sum += row_sum[_row][_col];
     }
-    total_sum[0][_col] = _sum;
-}
+    total_sum[0][_col] = _sum;}
 
 // FUSED LOOP (2 ops): result=TDIVS(total_sum,8.0f); output=TSTORE(result,0,0)
 float32x4_t _vs11 = vdupq_n_f32(8.0f);

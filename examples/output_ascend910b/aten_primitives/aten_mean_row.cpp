@@ -16,9 +16,7 @@ public:
     }
 
     __aicore__ inline void Process() {
-        CopyIn();
-        Compute();
-        CopyOut();
+        CopyIn(); Compute(); CopyOut();
     }
 
 private:
@@ -38,7 +36,6 @@ private:
         // TLOAD: Operation
 
         // BARRIER: TROWSUM
-        // TROWSUM: ReduceSum along rows
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, sum_result, 8.0f, 64);

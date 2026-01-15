@@ -15,7 +15,7 @@ __device__ float self[8][8];
 __device__ float vec[8][1];
 __device__ float result[8][1];
 
-__global__ void tensor_mv_kernel() {
+__global__ void tensor_mv_kernel(float* input_self, float* input_vec, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -28,21 +28,21 @@ __global__ void tensor_mv_kernel() {
 
     // FUSED (1 ops): vec=TLOAD(...)
     if (_row < 8 && _col < 1) {
-        vec[_row][_col] = input_vec[_row * 8 + _col];
+        vec[_row][_col] = input_vec[_row * 1 + _col];
     }
 
     // BARRIER: TMATMUL
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 1) {
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void tensor_mv() {
+void tensor_mv(float* input_self, float* input_vec, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_mv_kernel<<<grid, block>>>();
+    tensor_mv_kernel<<<grid, block>>>(input_self, input_vec, output);
     cudaDeviceSynchronize();
 }

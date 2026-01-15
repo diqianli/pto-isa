@@ -16,7 +16,7 @@ __device__ float other[1][64];
 __device__ float prod[1][64];
 __device__ float result[1][1];
 
-__global__ void tensor_dot_kernel() {
+__global__ void tensor_dot_kernel(float* input_self, float* input_other, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -24,8 +24,8 @@ __global__ void tensor_dot_kernel() {
 
     // FUSED (3 ops): self=TLOAD(...); other=TLOAD(...); prod=TMUL(...)
     if (_row < 1 && _col < 64) {
-        self[_row][_col] = input_self[_row * 8 + _col];
-        other[_row][_col] = input_other[_row * 8 + _col];
+        self[_row][_col] = input_self[_row * 64 + _col];
+        other[_row][_col] = input_other[_row * 64 + _col];
         prod[_row][_col] = self[_row][_col] * other[_row][_col];
     }
 
@@ -33,14 +33,14 @@ __global__ void tensor_dot_kernel() {
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 1 && _col < 1) {
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 1 + _col] = result[_row][_col];
     }
 
 }
 
-void tensor_dot() {
+void tensor_dot(float* input_self, float* input_other, float* output) {
     dim3 block(8, 8);
     dim3 grid(1, 1);
-    tensor_dot_kernel<<<grid, block>>>();
+    tensor_dot_kernel<<<grid, block>>>(input_self, input_other, output);
     cudaDeviceSynchronize();
 }

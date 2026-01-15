@@ -38,8 +38,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += x[_row][_col];
     }
-    row_sum[_row][0] = _sum;
-}
+    row_sum[_row][0] = _sum;}
 
 // FUSED LOOP (1 ops): mean=TDIVS(row_sum,8.0f)
 float32x4_t _vs1 = vdupq_n_f32(8.0f);
@@ -62,8 +61,7 @@ for (int _row = 0; _row < 8; _row++) {
     float _broadcast_val = mean[_row][0];
     for (int _col = 0; _col < 8; _col++) {
         x_minus_mean[_row][_col] = x[_row][_col] - _broadcast_val;
-    }
-}
+    }}
 
 // FUSED LOOP (1 ops): squared=TMUL(x_minus_mean,x_minus_mean)
 for (int _row = 0; _row < 8; _row++) {
@@ -87,8 +85,7 @@ for (int _row = 0; _row < 8; _row++) {
     for (int _col = 0; _col < 8; _col++) {
         _sum += squared[_row][_col];
     }
-    var_sum[_row][0] = _sum;
-}
+    var_sum[_row][0] = _sum;}
 
 // FUSED LOOP (3 ops): variance=TDIVS(var_sum,8.0f); var_eps=TADDS(variance,1e-05f); std=TSQRT(var_eps)
 float32x4_t _vs7 = vdupq_n_f32(8.0f);
@@ -120,8 +117,7 @@ for (int _row = 0; _row < 8; _row++) {
     float _broadcast_val = std[_row][0];
     for (int _col = 0; _col < 8; _col++) {
         result[_row][_col] = x_minus_mean[_row][_col] / _broadcast_val;
-    }
-}
+    }}
 
 // FUSED LOOP (1 ops): output=TSTORE(result,0,0)
 for (int _row = 0; _row < 8; _row++) {
