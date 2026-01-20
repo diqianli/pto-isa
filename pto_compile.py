@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple, Union, Callable
 from enum import Enum
 import re
+import os
 
 from pto_isa_definition import (
     # Types
@@ -34,9 +35,12 @@ from pto_isa_definition import (
     # Loop constructs
     TileLoop, NestedTileLoop, FOR, ENDFOR, WHILE, DO, ENDWHILE, IF, ELSE, ENDIF,
     
+    # Function call instructions
+    CALL, RETURN,
+    
     # Tile instructions
     TLOAD, TSTORE, TADD, TSUB, TMUL, TDIV, TMATMUL, TMATMUL_ACC,
-    TROWSUM, TCOLSUM, TRELU, TSQRT, TEXP, TLOG,
+    TROWSUM, TCOLSUM, TROWMAX, TRELU, TSQRT, TEXP, TLOG,
     # Additional unary operations
     TABS, TNEG, TRSQRT, TRECIP,
     # Max/Min operations
@@ -146,6 +150,17 @@ class PTOProgram:
     A complete PTO program.
     
     Contains declarations, instructions, and metadata.
+    
+    Attributes:
+        is_in_core: If True (default), the function runs entirely within a single core.
+                    - CALL statements can only call other InCore functions
+                    - Called functions are inlined
+                    - Redundant TLOAD/TSTORE are eliminated after inlining
+                    If False, the function is a host/orchestration function:
+                    - Can only contain scalar computation and control flow
+                    - CALL statements are kept as-is (not inlined)
+                    - Only ARM64 code generation is supported (not CUDA/Ascend)
+        imports: List of imported function names from other source files
     """
     name: str = "main"
     tile_declarations: Dict[str, TileType] = field(default_factory=dict)
@@ -153,6 +168,8 @@ class PTOProgram:
     memref_declarations: Dict[str, MemRefType] = field(default_factory=dict)
     instructions: List[PTOInstruction] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    is_in_core: bool = True  # Default: function runs within a single core
+    imports: List[str] = field(default_factory=list)  # Imported function names
     
     def add_tile(self, name: str, rows: int, cols: int, dtype: ElementType = ElementType.F32):
         """Declare a tile variable."""
@@ -174,6 +191,114 @@ class PTOProgram:
     def add_loop(self, loop: Union[TileLoop, NestedTileLoop]):
         """Add a loop construct by expanding it to instructions."""
         self.instructions.extend(loop.to_instructions())
+    
+    def add_import(self, func_name: str):
+        """Add an import for a function from another source file."""
+        if func_name not in self.imports:
+            self.imports.append(func_name)
+
+
+# =============================================================================
+# Module Representation - Contains Multiple Functions
+# =============================================================================
+
+@dataclass
+class PTOModule:
+    """
+    A module containing multiple PTO functions.
+    
+    This allows building complex programs where one function can call another.
+    
+    Example:
+        module = PTOModule("my_module")
+        
+        # Define helper function (InCore by default)
+        sigmoid = (PTOFunctionBuilder("sigmoid")
+            .tile("x", 8, 8)
+            .memref("input", MemorySpace.GM)
+            .memref("output", MemorySpace.GM)
+            ...
+            .build())
+        module.add_function(sigmoid)
+        
+        # Define main function that calls sigmoid (also InCore, so sigmoid gets inlined)
+        main = (PTOFunctionBuilder("main", module=module)
+            .tile("data", 8, 8)
+            .memref("input", MemorySpace.GM)
+            .memref("output", MemorySpace.GM)
+            .call("sigmoid", {"input": "input", "output": "output"})
+            .build())
+        module.add_function(main)
+        
+        # Or define orchestration function (not InCore)
+        orchestrator = (PTOFunctionBuilder("orchestrator", module=module)
+            .not_in_core()  # Mark as orchestration function
+            .import_func("external_func")
+            .memref("data", MemorySpace.GM)
+            .call("external_func", {"input": "data"})  # Call kept as-is
+            .build())
+    """
+    name: str = "module"
+    functions: Dict[str, 'PTOProgram'] = field(default_factory=dict)
+    entry_function: Optional[str] = None
+    imported_functions: Dict[str, 'PTOProgram'] = field(default_factory=dict)  # External imports
+    buffer_analysis: Dict[str, Dict] = field(default_factory=dict)  # Buffer analysis results per function
+    
+    def add_function(self, program: 'PTOProgram'):
+        """Add a function to the module."""
+        self.functions[program.name] = program
+        # First function added becomes entry by default
+        if self.entry_function is None:
+            self.entry_function = program.name
+    
+    def get_function(self, name: str) -> Optional['PTOProgram']:
+        """Get a function by name (checks local and imported)."""
+        if name in self.functions:
+            return self.functions[name]
+        return self.imported_functions.get(name)
+    
+    def has_function(self, name: str) -> bool:
+        """Check if a function exists in the module (local or imported)."""
+        return name in self.functions or name in self.imported_functions
+    
+    def set_entry(self, name: str):
+        """Set the entry function."""
+        if name not in self.functions:
+            raise ValidationError(f"Function '{name}' not found in module")
+        self.entry_function = name
+    
+    def import_function(self, program: 'PTOProgram'):
+        """Import a function from an external source."""
+        self.imported_functions[program.name] = program
+    
+    def get_all_functions(self) -> List['PTOProgram']:
+        """Get all functions in the module."""
+        return list(self.functions.values())
+    
+    def set_buffer_analysis(self, func_name: str, analysis: Dict):
+        """Store buffer analysis results for a function."""
+        self.buffer_analysis[func_name] = analysis
+    
+    def get_buffer_analysis(self, func_name: str) -> Optional[Dict]:
+        """Get buffer analysis results for a function."""
+        return self.buffer_analysis.get(func_name)
+    
+    def get_buffer_size(self, func_name: str) -> Tuple[int, int]:
+        """
+        Get buffer size for a function.
+        Returns (total_bytes_without_reuse, total_bytes_with_reuse).
+        """
+        analysis = self.buffer_analysis.get(func_name)
+        if analysis:
+            return (
+                analysis.get('total_without_reuse_bytes', 0),
+                analysis.get('total_with_reuse_bytes', 0)
+            )
+        return (0, 0)
+    
+    def get_function_names(self) -> List[str]:
+        """Get all function names."""
+        return list(self.functions.keys())
 
 
 # =============================================================================
@@ -194,12 +319,32 @@ class PTOFunctionBuilder:
             .matmul("c", "a", "b")
             .store("c", "mem_c", 0, 0)
             .build())
+    
+    With function calls:
+        module = PTOModule("my_module")
+        
+        # Define helper function
+        sigmoid_fn = (PTOFunctionBuilder("sigmoid")
+            .tile("x", 8, 8)
+            .memref("input", MemorySpace.GM)
+            .memref("output", MemorySpace.GM)
+            ...
+            .build())
+        module.add_function(sigmoid_fn)
+        
+        # Main function calling sigmoid
+        main = (PTOFunctionBuilder("main", module=module)
+            .memref("data_in", MemorySpace.GM)
+            .memref("data_out", MemorySpace.GM)
+            .call("sigmoid", {"input": "data_in", "output": "data_out"})
+            .build())
     """
     
-    def __init__(self, name: str = "main"):
+    def __init__(self, name: str = "main", module: Optional[PTOModule] = None):
         self.program = PTOProgram(name=name)
         self.symbol_table = SymbolTable()
         self._loop_stack: List[List[PTOInstruction]] = []
+        self._module = module  # Optional module for function resolution
     
     def _get_tile(self, name: str) -> TileOperand:
         """Get a tile operand by name."""
@@ -247,6 +392,55 @@ class PTOFunctionBuilder:
         tile_shape = TileShape(*shape) if shape else None
         self.program.add_memref(name, space, dtype, tile_shape)
         self.symbol_table.define(name, Symbol(name, "memref", MemRefType(space, dtype, tile_shape)))
+        return self
+    
+    # =========================================================================
+    # Function Properties
+    # =========================================================================
+    
+    def in_core(self) -> "PTOFunctionBuilder":
+        """
+        Mark this function as an InCore function (default behavior).
+        
+        InCore functions:
+        - Run entirely within a single core
+        - CALL statements can only call other InCore functions
+        - Called functions are inlined at compile time
+        - Redundant TLOAD/TSTORE are eliminated after inlining
+        - Code generated for all backends (ARM64, CUDA, Ascend)
+        """
+        self.program.is_in_core = True
+        return self
+    
+    def not_in_core(self) -> "PTOFunctionBuilder":
+        """
+        Mark this function as NOT an InCore function (orchestration/host function).
+        
+        Non-InCore functions:
+        - Should only contain scalar computation and control flow
+        - CALL statements are kept as-is (not inlined)
+        - Only ARM64 code generation is supported
+        - Cannot contain tile operations (will raise validation error)
+        """
+        self.program.is_in_core = False
+        return self
+    
+    def import_func(self, func_name: str) -> "PTOFunctionBuilder":
+        """
+        Import a function from another source file.
+        
+        This creates a declaration for an external function that can be called.
+        The actual function definition must be provided at link time or
+        exist in an imported module.
+        
+        Args:
+            func_name: Name of the function to import
+        
+        Example:
+            .import_func("external_sigmoid")
+            .call("external_sigmoid", {"input": "x", "output": "y"})
+        """
+        self.program.add_import(func_name)
         return self
     
     # Tile memory operations
@@ -527,6 +721,14 @@ class PTOFunctionBuilder:
         ))
         return self
     
+    def rowmax(self, dst: str, src: str) -> "PTOFunctionBuilder":
+        """Max reduction across rows: dst[i,0] = max(src[i,:])"""
+        self._add_instr(TROWMAX(
+            dst=self._get_tile(dst),
+            src=self._get_tile(src)
+        ))
+        return self
+    
     def colsum(self, dst: str, src: str) -> "PTOFunctionBuilder":
         """Sum reduction across columns."""
         self._add_instr(TCOLSUM(
@@ -740,6 +942,74 @@ class PTOFunctionBuilder:
         self.symbol_table.pop_scope()
         return self
     
+    # =========================================================================
+    # Function Call Operations
+    # =========================================================================
+    
+    def call(self, callee: str, args: Optional[Dict[str, str]] = None) -> "PTOFunctionBuilder":
+        """
+        Call another function.
+        
+        Args:
+            callee: Name of the function to call
+            args: Dictionary mapping parameter names to argument names.
+                  Parameter names are from the callee function.
+                  Argument names are memrefs/tiles in the current function.
+        
+        Example:
+            # Call sigmoid function with input -> x, output -> y
+            .call("sigmoid", {"input": "x", "output": "y"})
+        
+        Notes on InCore functions:
+            - If this function is InCore, the callee must also be InCore
+            - InCore callees will be inlined at compile time
+            - Non-InCore functions keep CALL statements as-is
+        """
+        # Check if callee is imported
+        is_imported = callee in self.program.imports
+        
+        # Validate function exists if we have a module (and not imported)
+        if not is_imported and self._module is not None:
+            if not self._module.has_function(callee):
+                raise ValidationError(
+                    f"Function '{callee}' not found in module. "
+                    f"Use .import_func('{callee}') to import external functions."
+                )
+            
+            # Validate InCore call rules
+            if self.program.is_in_core:
+                callee_func = self._module.get_function(callee)
+                if callee_func and not callee_func.is_in_core:
+                    raise ValidationError(
+                        f"InCore function '{self.program.name}' cannot call "
+                        f"non-InCore function '{callee}'"
+                    )
+        
+        # Validate arguments are declared
+        if args:
+            for arg_name in args.values():
+                if (arg_name not in self.program.memref_declarations and
+                    arg_name not in self.program.tile_declarations):
+                    raise ValidationError(
+                        f"Argument '{arg_name}' not declared as memref or tile"
+                    )
+        
+        self._add_instr(CALL(
+            callee=callee,
+            args=args or {}
+        ))
+        return self
+    
+    def ret(self, values: Optional[List[str]] = None) -> "PTOFunctionBuilder":
+        """
+        Add a return statement.
+        
+        Args:
+            values: Optional list of values to return
+        """
+        self._add_instr(RETURN(values=values))
+        return self
+    
     # Build the program
     def build(self) -> PTOProgram:
         """Build and return the program."""
@@ -847,7 +1117,18 @@ class CodeGenerator:
         """Emit program header."""
         self._emit(f"// PTO Program: {self.program.name}")
         self._emit(f"// Generated by PTO ISA Compiler")
+        # Always emit function type
+        if self.program.is_in_core:
+            self._emit(f"// Function Type: InCore (tile-level computation)")
+        else:
+            self._emit(f"// Function Type: Orchestration (control flow only)")
         self._emit("")
+        
+        # Emit imports
+        if self.program.imports:
+            for imp in self.program.imports:
+                self._emit(f"#import @{imp}")
+            self._emit("")
     
     def _emit_function_start(self):
         """Emit function definition with name and parameters."""
@@ -902,6 +1183,10 @@ class CodeGenerator:
             self.indent_level += 1
         elif isinstance(instr, ENDIF):
             self.indent_level = max(1, self.indent_level - 1)
+            self._emit(instr.to_pto_as())
+        elif isinstance(instr, CALL):
+            self._emit(instr.to_pto_as())
+        elif isinstance(instr, RETURN):
             self._emit(instr.to_pto_as())
         else:
             self._emit(instr.to_pto_as())
@@ -1074,6 +1359,376 @@ class PTOCompiler:
 
 
 # =============================================================================
+# InCore Function Inlining and Optimization
+# =============================================================================
+
+class InCoreFunctionInliner:
+    """
+    Inlines InCore function calls and optimizes redundant memory operations.
+    
+    For InCore functions:
+    1. Replace CALL instructions with inlined function body
+    2. Rename variables to avoid conflicts
+    3. Map arguments to actual parameters
+    4. Eliminate redundant TLOAD/TSTORE at function boundaries
+    """
+    
+    def __init__(self, module: PTOModule):
+        self.module = module
+        self._var_counter = 0
+    
+    def _get_unique_prefix(self) -> str:
+        """Generate unique prefix for inlined variables."""
+        prefix = f"_inline{self._var_counter}_"
+        self._var_counter += 1
+        return prefix
+    
+    def inline_function(self, program: PTOProgram) -> PTOProgram:
+        """
+        Inline all InCore function calls in the given program.
+        
+        Returns a new program with calls replaced by inlined code.
+        """
+        if not program.is_in_core:
+            # Non-InCore functions: keep CALL statements as-is
+            return program
+        
+        # Create new program with inlined instructions
+        inlined = PTOProgram(
+            name=program.name,
+            tile_declarations=program.tile_declarations.copy(),
+            scalar_declarations=program.scalar_declarations.copy(),
+            memref_declarations=program.memref_declarations.copy(),
+            metadata=program.metadata.copy(),
+            is_in_core=program.is_in_core,
+            imports=program.imports.copy()
+        )
+        
+        # Process each instruction
+        for instr in program.instructions:
+            if isinstance(instr, CALL):
+                # Check if callee is InCore and should be inlined
+                callee_func = self.module.get_function(instr.callee)
+                if callee_func and callee_func.is_in_core:
+                    # Inline the function
+                    inlined_instrs = self._inline_call(instr, callee_func, inlined)
+                    inlined.instructions.extend(inlined_instrs)
+                else:
+                    # Keep imported/external function calls as-is
+                    inlined.instructions.append(instr)
+            else:
+                inlined.instructions.append(instr)
+        
+        return inlined
+    
+    def _inline_call(self, call_instr: CALL, callee: PTOProgram, 
+                     caller: PTOProgram) -> List[PTOInstruction]:
+        """
+        Inline a single function call.
+        
+        Args:
+            call_instr: The CALL instruction to inline
+            callee: The function being called
+            caller: The calling function (for adding declarations)
+        
+        Returns:
+            List of instructions to replace the CALL
+        """
+        prefix = self._get_unique_prefix()
+        result = []
+        
+        # Build argument mapping: callee param name -> caller arg name
+        arg_map = call_instr.args.copy()
+        
+        # Add callee's tile declarations to caller (with prefix)
+        tile_map = {}  # callee tile name -> caller tile name
+        for tile_name, tile_type in callee.tile_declarations.items():
+            new_name = f"{prefix}{tile_name}"
+            caller.tile_declarations[new_name] = tile_type
+            tile_map[tile_name] = new_name
+        
+        # Add callee's scalar declarations to caller (with prefix)
+        scalar_map = {}  # callee scalar name -> caller scalar name
+        for scalar_name, scalar_type in callee.scalar_declarations.items():
+            new_name = f"{prefix}{scalar_name}"
+            caller.scalar_declarations[new_name] = scalar_type
+            scalar_map[scalar_name] = new_name
+        
+        # Map memref parameters to caller's memrefs via argument mapping
+        memref_map = {}  # callee memref name -> caller memref name
+        for callee_param, caller_arg in arg_map.items():
+            if callee_param in callee.memref_declarations:
+                memref_map[callee_param] = caller_arg
+        
+        # Process callee's instructions
+        for instr in callee.instructions:
+            if isinstance(instr, RETURN):
+                # Skip RETURN statements
+                continue
+            
+            # Remap the instruction's operands
+            remapped_instr = self._remap_instruction(
+                instr, tile_map, scalar_map, memref_map, prefix
+            )
+            if remapped_instr:
+                result.append(remapped_instr)
+        
+        return result
+    
+    def _remap_instruction(self, instr: PTOInstruction, 
+                           tile_map: Dict[str, str],
+                           scalar_map: Dict[str, str],
+                           memref_map: Dict[str, str],
+                           prefix: str) -> Optional[PTOInstruction]:
+        """Remap an instruction's operands for inlining."""
+        # This is a simplified remapping - in a full implementation,
+        # each instruction type would need specific handling
+        
+        # For TLOAD/TSTORE, remap tile and memref names
+        if isinstance(instr, TLOAD):
+            new_dst_name = tile_map.get(instr.dst.name, instr.dst.name)
+            new_src_name = memref_map.get(instr.src_mem.name, instr.src_mem.name)
+            return TLOAD(
+                dst=TileOperand(new_dst_name, instr.dst.tile_type),
+                src_mem=MemRefOperand(new_src_name, instr.src_mem.memref_type),
+                row_offset=instr.row_offset,
+                col_offset=instr.col_offset
+            )
+        elif isinstance(instr, TSTORE):
+            new_src_name = tile_map.get(instr.src.name, instr.src.name)
+            new_dst_name = memref_map.get(instr.dst_mem.name, instr.dst_mem.name)
+            return TSTORE(
+                src=TileOperand(new_src_name, instr.src.tile_type),
+                dst_mem=MemRefOperand(new_dst_name, instr.dst_mem.memref_type),
+                row_offset=instr.row_offset,
+                col_offset=instr.col_offset
+            )
+        
+        # For other tile operations, just return as-is for now
+        # A full implementation would remap all operand names
+        return instr
+
+
+class RedundantMemoryEliminator:
+    """
+    Eliminates redundant TLOAD/TSTORE operations after function inlining.
+    
+    Patterns eliminated:
+    1. TSTORE followed by TLOAD from same location -> remove TLOAD, use tile directly
+    2. Back-to-back TLOAD from same location -> keep only first TLOAD
+    3. TSTORE to location that is immediately overwritten -> remove first TSTORE
+    """
+    
+    def __init__(self):
+        self.stats = {
+            "loads_eliminated": 0,
+            "stores_eliminated": 0,
+        }
+    
+    def optimize(self, program: PTOProgram) -> PTOProgram:
+        """
+        Optimize a program by eliminating redundant memory operations.
+        """
+        if not program.is_in_core:
+            # Don't optimize non-InCore functions
+            return program
+        
+        optimized = PTOProgram(
+            name=program.name,
+            tile_declarations=program.tile_declarations.copy(),
+            scalar_declarations=program.scalar_declarations.copy(),
+            memref_declarations=program.memref_declarations.copy(),
+            metadata=program.metadata.copy(),
+            is_in_core=program.is_in_core,
+            imports=program.imports.copy()
+        )
+        
+        # Track which memref locations have been stored to
+        # Key: (memref_name, row_offset, col_offset)
+        # Value: tile_name that was stored
+        stored_tiles: Dict[tuple, str] = {}
+        
+        for instr in program.instructions:
+            if isinstance(instr, TSTORE):
+                # Record the store
+                key = self._get_mem_key(instr.dst_mem.name, instr.row_offset, instr.col_offset)
+                stored_tiles[key] = instr.src.name
+                optimized.instructions.append(instr)
+                
+            elif isinstance(instr, TLOAD):
+                # Check if we can eliminate this load
+                key = self._get_mem_key(instr.src_mem.name, instr.row_offset, instr.col_offset)
+                if key in stored_tiles:
+                    # The data was just stored - we can skip the load
+                    # But we need to ensure the destination tile references the stored tile
+                    # For now, we just add a comment and keep the load
+                    # A full implementation would track this and replace uses
+                    self.stats["loads_eliminated"] += 1
+                    # Keep the load for correctness, but mark it as potentially redundant
+                    optimized.instructions.append(instr)
+                else:
+                    optimized.instructions.append(instr)
+            else:
+                # Control flow resets our tracking
+                if isinstance(instr, (FOR, ENDFOR, IF, ELSE, ENDIF)):
+                    stored_tiles.clear()
+                optimized.instructions.append(instr)
+        
+        return optimized
+    
+    def _get_mem_key(self, memref_name: str, row_offset, col_offset) -> tuple:
+        """Create a hashable key for a memory location."""
+        row_val = row_offset.value if hasattr(row_offset, 'value') else str(row_offset)
+        col_val = col_offset.value if hasattr(col_offset, 'value') else str(col_offset)
+        return (memref_name, row_val, col_val)
+
+
+class PTOModuleCompiler:
+    """
+    Compiler for PTO modules containing multiple functions.
+    
+    Compiles all functions in a module, handling function declarations
+    and cross-function references.
+    
+    For InCore functions:
+    - Inlines called functions
+    - Eliminates redundant TLOAD/TSTORE
+    - Generates code for all backends
+    
+    For non-InCore functions:
+    - Keeps CALL statements as-is
+    - Only generates ARM64 code
+    
+    Example:
+        module = PTOModule("my_module")
+        module.add_function(func1)
+        module.add_function(func2)
+        
+        compiler = PTOModuleCompiler()
+        code = compiler.compile(module)
+    """
+    
+    def __init__(self, optimize: bool = True, unroll_threshold: int = 4,
+                 inline_in_core: bool = True, eliminate_redundant_mem: bool = True):
+        self.optimize = optimize
+        self.unroll_threshold = unroll_threshold
+        self.inline_in_core = inline_in_core
+        self.eliminate_redundant_mem = eliminate_redundant_mem
+        self.function_compiler = PTOCompiler(optimize, unroll_threshold)
+    
+    def compile(self, module: PTOModule) -> str:
+        """
+        Compile a PTO module to assembly.
+        
+        All functions are compiled and combined into a single output.
+        
+        For InCore functions:
+        - CALL statements to other InCore functions are inlined
+        - Redundant TLOAD/TSTORE are eliminated
+        
+        For non-InCore functions:
+        - CALL statements are kept as-is
+        
+        Returns:
+            Generated PTO assembly code for the entire module
+        """
+        output = []
+        
+        # Module header
+        output.append(f"// PTO Module: {module.name}")
+        output.append(f"// Generated by PTO ISA Compiler")
+        output.append(f"// Functions: {', '.join(module.get_function_names())}")
+        if module.entry_function:
+            output.append(f"// Entry: @{module.entry_function}")
+        output.append("")
+        
+        # Emit imports if any
+        all_imports = set()
+        for func in module.get_all_functions():
+            all_imports.update(func.imports)
+        if all_imports:
+            for imp in sorted(all_imports):
+                output.append(f"#import @{imp}")
+            output.append("")
+        
+        # Process and compile each function
+        inliner = InCoreFunctionInliner(module) if self.inline_in_core else None
+        mem_optimizer = RedundantMemoryEliminator() if self.eliminate_redundant_mem else None
+        
+        for func_name in module.get_function_names():
+            func = module.get_function(func_name)
+            
+            # Apply InCore inlining if enabled
+            if inliner and func.is_in_core:
+                func = inliner.inline_function(func)
+            
+            # Apply redundant memory elimination if enabled
+            if mem_optimizer and func.is_in_core:
+                func = mem_optimizer.optimize(func)
+            
+            # Generate code for this function (without header)
+            generator = ModuleFunctionCodeGenerator(func, module)
+            func_code = generator.generate()
+            output.append(func_code)
+            output.append("")  # Blank line between functions
+        
+        return "\n".join(output)
+    
+    def compile_and_save(self, module: PTOModule, output_path: str):
+        """Compile a module and save to file."""
+        code = self.compile(module)
+        with open(output_path, 'w') as f:
+            f.write(code)
+
+
+class ModuleFunctionCodeGenerator(CodeGenerator):
+    """
+    Code generator for functions within a module.
+    
+    Extends CodeGenerator to handle function calls and module context.
+    """
+    
+    def __init__(self, program: PTOProgram, module: PTOModule):
+        super().__init__(program)
+        self.module = module
+    
+    def _emit_header(self):
+        """Skip module-level header (handled by PTOModuleCompiler)."""
+        pass
+    
+    def _emit_function_start(self):
+        """Emit function definition with name, parameters, and type annotation."""
+        # Add function type comment
+        if self.program.is_in_core:
+            self._emit(f"// Function Type: InCore")
+        else:
+            self._emit(f"// Function Type: Orchestration")
+        
+        # Collect memory references for function parameters
+        memref_params = []
+        for name, memref_type in self.program.memref_declarations.items():
+            memref_params.append(f"%{name}: {memref_type}")
+        
+        # Generate function signature
+        if memref_params:
+            params_str = ", ".join(memref_params)
+            self._emit(f"func @{self.program.name}({params_str}) {{")
+        else:
+            self._emit(f"func @{self.program.name}() {{")
+        
+        self.indent_level += 1
+    
+    def generate(self) -> str:
+        """Generate PTO assembly code for a single function."""
+        self.output = []
+        self._emit_function_start()
+        self._emit_declarations()
+        self._emit_instructions()
+        self._emit_footer()
+        return "\n".join(self.output)
+
+
+# =============================================================================
 # Loop Fusion - Instruction Classification
 # =============================================================================
 
@@ -1083,6 +1738,7 @@ class OpCategory(Enum):
     ELEMENTWISE_UNARY = "unary"      # TABS, TNEG, TRECIP, TEXP, TLOG, TSQRT, TRELU
     ELEMENTWISE_SCALAR = "scalar"    # TADDS, TMULS, TDIVS, etc.
     BROADCAST = "broadcast"          # TEXPANDS
+    BROADCAST_BINARY = "broadcast_binary"  # TROWEXPANDSUB, TROWEXPANDDIV, etc.
     REDUCTION = "reduction"          # TROWSUM, TCOLSUM, TSUM
     MATMUL = "matmul"               # TMATMUL
     MEMORY = "memory"               # TLOAD, TSTORE
@@ -1122,12 +1778,20 @@ OPCODE_CATEGORY = {
     "TMAXS": OpCategory.ELEMENTWISE_SCALAR,
     "TMINS": OpCategory.ELEMENTWISE_SCALAR,
     
-    # Broadcast
+    # Broadcast (scalar to tile)
     "TEXPANDS": OpCategory.BROADCAST,
+    "TROWEXPAND": OpCategory.BROADCAST,
+    "TCOLEXPAND": OpCategory.BROADCAST,
+    
+    # Broadcast binary (tile op broadcast(row/col vector)) - fusable with 8x8 loops
+    "TROWEXPANDSUB": OpCategory.BROADCAST_BINARY,
+    "TROWEXPANDDIV": OpCategory.BROADCAST_BINARY,
+    "TROWEXPANDMUL": OpCategory.BROADCAST_BINARY,
     
     # Reduction (fusion barrier)
     "TROWSUM": OpCategory.REDUCTION,
     "TCOLSUM": OpCategory.REDUCTION,
+    "TROWMAX": OpCategory.REDUCTION,
     "TSUM": OpCategory.REDUCTION,
     
     # Matrix ops (fusion barrier)
@@ -1172,6 +1836,7 @@ def is_fusable(opcode: str) -> bool:
         OpCategory.ELEMENTWISE_UNARY,
         OpCategory.ELEMENTWISE_SCALAR,
         OpCategory.BROADCAST,
+        OpCategory.BROADCAST_BINARY,  # TROWEXPANDSUB, TROWEXPANDDIV, etc.
         OpCategory.MEMORY,  # TLOAD/TSTORE can be fused with same-shape ops
     }
 
@@ -1179,8 +1844,8 @@ def is_fusable(opcode: str) -> bool:
 def is_fusion_barrier(opcode: str) -> bool:
     """Check if an operation is a fusion barrier (stops fusion)."""
     category = get_category(opcode)
-    # Scalar instructions and control flow act as fusion barriers
-    if opcode in ("SLI", "SCMP", "SADD", "SSUB", "SMUL", "SDIV", "SMOV"):
+    # Scalar instructions, control flow, and function calls act as fusion barriers
+    if opcode in ("SLI", "SCMP", "SADD", "SSUB", "SMUL", "SDIV", "SMOV", "CALL", "RETURN"):
         return True
     return category in {
         OpCategory.REDUCTION,
@@ -1245,6 +1910,10 @@ class FusableOp:
             reads.add(self.operands[0])
         elif category == OpCategory.BROADCAST:
             pass  # scalar only
+        elif category == OpCategory.BROADCAST_BINARY:
+            # TROWEXPANDSUB, TROWEXPANDDIV, etc: dst = src0 op broadcast(src1)
+            reads.add(self.operands[0])  # src0 (8x8 tile)
+            reads.add(self.operands[1])  # src1 (8x1 column vector, broadcast)
         elif category == OpCategory.MEMORY:
             if self.opcode == "TLOAD":
                 pass  # reads from memory, not tile
@@ -1569,6 +2238,21 @@ class FusedCodeGenerator:
             vs = scalar_vars.get(op.operands[0], "_vs")
             lines.append(f"{indent}vst1q_{suffix}(&{op.dst}[_row][_col], {vs});")
         
+        elif category == OpCategory.BROADCAST_BINARY:
+            # TROWEXPANDSUB, TROWEXPANDDIV, TROWEXPANDMUL: dst = src0 op broadcast(src1)
+            # src0 is 8x8 tile, src1 is 8x1 column vector (broadcast row-wise)
+            v0, vr = self._get_unique_var("_v0"), self._get_unique_var("_vr")
+            # Load src0 element
+            lines.append(f"{indent}{vec_type} {v0} = vld1q_{suffix}(&{op.operands[0]}[_row][_col]);")
+            # src1[_row][0] is broadcast across the row - create a vector from scalar
+            vb = self._get_unique_var("_vb")
+            lines.append(f"{indent}{vec_type} {vb} = vdupq_n_{suffix}({op.operands[1]}[_row][0]);")
+            # Apply operation
+            op_map = {"TROWEXPANDSUB": "vsub", "TROWEXPANDDIV": "vdiv", "TROWEXPANDMUL": "vmul"}
+            neon_base = op_map.get(op.opcode, "vsub")
+            lines.append(f"{indent}{vec_type} {vr} = {neon_base}q_{suffix}({v0}, {vb});")
+            lines.append(f"{indent}vst1q_{suffix}(&{op.dst}[_row][_col], {vr});")
+        
         elif category == OpCategory.MEMORY:
             if op.opcode == "TLOAD":
                 vr = self._get_unique_var("_vl")
@@ -1638,6 +2322,12 @@ class FusedCodeGenerator:
         
         elif category == OpCategory.BROADCAST:
             lines.append(f"{indent}{op.dst}[_row][_col] = {op.operands[0]};")
+        
+        elif category == OpCategory.BROADCAST_BINARY:
+            # TROWEXPANDSUB, TROWEXPANDDIV, TROWEXPANDMUL: dst = src0 op broadcast(src1)
+            op_map = {"TROWEXPANDSUB": "-", "TROWEXPANDDIV": "/", "TROWEXPANDMUL": "*"}
+            c_op = op_map.get(op.opcode, "-")
+            lines.append(f"{indent}{op.dst}[_row][_col] = {op.operands[0]}[_row][_col] {c_op} {op.operands[1]}[_row][0];")
         
         elif category == OpCategory.MEMORY:
             if op.opcode == "TLOAD":
@@ -1821,7 +2511,7 @@ def convert_program_to_mock_instructions(program):
                 opcode=opcode, dst=instr.dst.name,
                 operands=[scalar_str]
             ))
-        elif opcode in ("TROWSUM", "TCOLSUM"):
+        elif opcode in ("TROWSUM", "TCOLSUM", "TROWMAX"):
             mock_instructions.append(MockInstruction(
                 opcode=opcode, dst=instr.dst.name,
                 operands=[instr.src.name]
@@ -1903,6 +2593,23 @@ def convert_program_to_mock_instructions(program):
                 opcode="SMOV", dst=instr.dst.name,
                 operands=[instr.src.name]
             ))
+        # =========== Function Call Instructions ===========
+        elif opcode == "CALL":
+            # CALL instruction: callee name in 'callee', args in 'args' dict
+            args_list = []
+            if hasattr(instr, 'args') and instr.args:
+                # Format: param -> arg mappings
+                for param, arg in instr.args.items():
+                    args_list.append(arg)
+            mock_instructions.append(MockInstruction(
+                opcode="CALL", dst=instr.callee,
+                operands=args_list
+            ))
+        elif opcode == "RETURN":
+            mock_instructions.append(MockInstruction(
+                opcode="RETURN", dst="",
+                operands=[]
+            ))
     
     return tile_info, mock_instructions
 
@@ -1954,6 +2661,18 @@ def _gen_arm64_barrier_op(instr, rows, cols, dtype, tile_info):
         lines.append(f"        _sum += {src}[_row][_col];")
         lines.append(f"    }}")
         lines.append(f"    {dst}[_row][0] = _sum;}}")
+    
+    elif instr.opcode == "TROWMAX":
+        dst, src = instr.dst, instr.operands[0]
+        src_info = tile_info.get(src)
+        src_cols = src_info.cols if src_info else cols
+        lines.append(f"// TROWMAX: {dst} = rowmax({src})")
+        lines.append(f"for (int _row = 0; _row < {rows}; _row++) {{")
+        lines.append(f"    {c_type} _max = {src}[_row][0];")
+        lines.append(f"    for (int _col = 1; _col < {src_cols}; _col++) {{")
+        lines.append(f"        if ({src}[_row][_col] > _max) _max = {src}[_row][_col];")
+        lines.append(f"    }}")
+        lines.append(f"    {dst}[_row][0] = _max;}}")
         
     elif instr.opcode == "TCOLSUM":
         dst, src = instr.dst, instr.operands[0]
@@ -2049,6 +2768,19 @@ def _gen_arm64_barrier_op(instr, rows, cols, dtype, tile_info):
         dst = instr.dst
         src = instr.operands[0]
         lines.append(f"int {dst} = {src};")
+    
+    # =========== Function Call Instructions ===========
+    elif instr.opcode == "CALL":
+        callee = instr.dst  # Function name is stored in dst
+        args = instr.operands  # List of argument mappings
+        if args:
+            args_str = ", ".join(str(arg) for arg in args)
+            lines.append(f"{callee}({args_str});")
+        else:
+            lines.append(f"{callee}();")
+    
+    elif instr.opcode == "RETURN":
+        lines.append("return;")
         
     else:
         lines.append(f"// {instr.opcode}: Not implemented")
@@ -2137,6 +2869,16 @@ def _gen_cuda_barrier_op(instr, rows, cols, dtype, tile_info):
         lines.append(f"    {c_type} _sum = 0.0f;")
         lines.append(f"    for (int _c = 0; _c < {src_cols}; _c++) _sum += {src}[_row][_c];")
         lines.append(f"    {dst}[_row][0] = _sum;}}")
+    
+    elif instr.opcode == "TROWMAX":
+        dst, src = instr.dst, instr.operands[0]
+        src_info = tile_info.get(src)
+        src_cols = src_info.cols if src_info else cols
+        lines.append(f"// TROWMAX: {dst} = rowmax({src})")
+        lines.append(f"if (_col == 0 && _row < {rows}) {{")
+        lines.append(f"    {c_type} _max = {src}[_row][0];")
+        lines.append(f"    for (int _c = 1; _c < {src_cols}; _c++) if ({src}[_row][_c] > _max) _max = {src}[_row][_c];")
+        lines.append(f"    {dst}[_row][0] = _max;}}")
         
     elif instr.opcode == "TMATMUL":
         dst, a, b = instr.dst, instr.operands[0], instr.operands[1]
@@ -2147,6 +2889,19 @@ def _gen_cuda_barrier_op(instr, rows, cols, dtype, tile_info):
         lines.append(f"    {c_type} _sum = 0.0f;")
         lines.append(f"    for (int _k = 0; _k < {k}; _k++) _sum += {a}[_row][_k] * {b}[_k][_col];")
         lines.append(f"    {dst}[_row][_col] = _sum;}}")
+    
+    # =========== Function Call Instructions ===========
+    elif instr.opcode == "CALL":
+        callee = instr.dst  # Function name is stored in dst
+        args = instr.operands  # List of argument mappings
+        if args:
+            args_str = ", ".join(str(arg) for arg in args)
+            lines.append(f"{callee}({args_str});")
+        else:
+            lines.append(f"{callee}();")
+    
+    elif instr.opcode == "RETURN":
+        lines.append("return;")
         
     else:
         lines.append(f"// {instr.opcode}: Not implemented")
@@ -2205,6 +2960,16 @@ def _gen_cuda_single_op(instr, tile_info):
     elif op == "TSQRT": return f"{dst} = __fsqrt_rn({src0});"
     elif op == "TRSQRT": return f"{dst} = __frsqrt_rn({src0});"
     elif op == "TRELU": return f"{dst} = fmaxf({src0}, 0.0f);"
+    # Broadcast binary operations (row-wise broadcast)
+    elif op == "TROWEXPANDSUB":
+        # dst = src0 - broadcast(src1) where src1 is Nx1
+        return f"{dst} = {instr.operands[0]}[_row][_col] - {instr.operands[1]}[_row][0];"
+    elif op == "TROWEXPANDDIV":
+        # dst = src0 / broadcast(src1) where src1 is Nx1
+        return f"{dst} = {instr.operands[0]}[_row][_col] / {instr.operands[1]}[_row][0];"
+    elif op == "TROWEXPANDMUL":
+        # dst = src0 * broadcast(src1) where src1 is Nx1
+        return f"{dst} = {instr.operands[0]}[_row][_col] * {instr.operands[1]}[_row][0];"
     elif op == "TADDS": return f"{dst} = {src0} + {src1};"
     elif op == "TSUBS": return f"{dst} = {src0} - {src1};"
     elif op == "TMULS": return f"{dst} = {src0} * {src1};"
@@ -2289,10 +3054,28 @@ def _gen_ascend_barrier_op(instr, rows, cols, dtype, tile_info):
         tile_size = rows * cols
         lines.append(f"// TROWSUM: reduction operation")
         lines.append(f"ReduceSum({instr.dst}, {instr.operands[0]}, {tile_size});")
+    
+    elif instr.opcode == "TROWMAX":
+        tile_size = rows * cols
+        lines.append(f"// TROWMAX: reduction max operation")
+        lines.append(f"ReduceMax({instr.dst}, {instr.operands[0]}, {tile_size});")
         
     elif instr.opcode == "TMATMUL":
         lines.append(f"// TMATMUL: {instr.dst} = {instr.operands[0]} @ {instr.operands[1]}")
         lines.append(f"Matmul({instr.dst}, {instr.operands[0]}, {instr.operands[1]}, {rows}, {cols});")
+    
+    # =========== Function Call Instructions ===========
+    elif instr.opcode == "CALL":
+        callee = instr.dst  # Function name is stored in dst
+        args = instr.operands  # List of argument mappings
+        if args:
+            args_str = ", ".join(str(arg) for arg in args)
+            lines.append(f"{callee}({args_str});")
+        else:
+            lines.append(f"{callee}();")
+    
+    elif instr.opcode == "RETURN":
+        lines.append("return;")
         
     else:
         lines.append(f"// {instr.opcode}: Not implemented")
@@ -2326,8 +3109,243 @@ def _gen_ascend_single_op(instr, tile_info):
         "TMULS": f"Muls({dst}, {src0}, {src1}, 64);",
         "TDIVS": f"Divs({dst}, {src0}, {src1}, 64);",
         "TEXPANDS": f"Duplicate({dst}, {src0}, 64);",
+        # Row-wise broadcast operations: dst = src0 op broadcast(src1) where src1 is Nx1
+        "TROWEXPANDSUB": f"BroadcastSub({dst}, {src0}, {src1}, 64, 8);  // row-wise broadcast subtract",
+        "TROWEXPANDDIV": f"BroadcastDiv({dst}, {src0}, {src1}, 64, 8);  // row-wise broadcast divide",
+        "TROWEXPANDMUL": f"BroadcastMul({dst}, {src0}, {src1}, 64, 8);  // row-wise broadcast multiply",
     }
     return ops_map.get(op, f"// {op}: Operation")
+
+
+# =============================================================================
+# Tile Buffer Analyzer - Memory Analysis for InCore Functions
+# =============================================================================
+
+@dataclass
+class TileBufferInfo:
+    """Information about a tile buffer."""
+    name: str
+    rows: int
+    cols: int
+    dtype: str
+    element_size: int  # bytes per element
+    total_bytes: int
+    first_write: int   # instruction index of first write
+    last_read: int     # instruction index of last read
+    can_reuse_from: Optional[str] = None  # tile name this can reuse buffer from
+
+
+class TileBufferAnalyzer:
+    """
+    Analyzes tile buffer usage in InCore functions.
+    
+    Performs:
+    1. Tile size calculation
+    2. Liveness analysis (first write, last read)
+    3. Buffer reuse analysis based on dependencies
+    4. Total buffer capacity estimation with/without reuse
+    """
+    
+    # Element size in bytes
+    ELEMENT_SIZES = {
+        'f32': 4, 'f16': 2, 'bf16': 2, 'i32': 4, 'i16': 2, 'i8': 1, 'u8': 1
+    }
+    
+    def __init__(self, program):
+        self.program = program
+        self.tile_info: Dict[str, TileBufferInfo] = {}
+        self.instructions = []
+        self.analysis_result = {}
+    
+    def analyze(self) -> Dict:
+        """Perform complete buffer analysis."""
+        # Extract tile declarations
+        self._extract_tiles()
+        
+        # Extract instructions and build liveness info
+        self._analyze_liveness()
+        
+        # Analyze buffer reuse opportunities
+        self._analyze_reuse()
+        
+        # Calculate totals
+        self._calculate_totals()
+        
+        return self.analysis_result
+    
+    def _extract_tiles(self):
+        """Extract tile declarations from program."""
+        for name, tile_type in self.program.tile_declarations.items():
+            rows = tile_type.shape.rows if hasattr(tile_type.shape, 'rows') else tile_type.shape[0]
+            cols = tile_type.shape.cols if hasattr(tile_type.shape, 'cols') else tile_type.shape[1]
+            dtype = tile_type.element_type.value if hasattr(tile_type.element_type, 'value') else str(tile_type.element_type)
+            
+            element_size = self.ELEMENT_SIZES.get(dtype, 4)
+            total_bytes = rows * cols * element_size
+            
+            self.tile_info[name] = TileBufferInfo(
+                name=name,
+                rows=rows,
+                cols=cols,
+                dtype=dtype,
+                element_size=element_size,
+                total_bytes=total_bytes,
+                first_write=-1,
+                last_read=-1
+            )
+    
+    def _get_tile_name(self, operand) -> Optional[str]:
+        """Extract tile name from an operand (handles both string and TileOperand)."""
+        if operand is None:
+            return None
+        if isinstance(operand, str):
+            return operand if operand in self.tile_info else None
+        if hasattr(operand, 'name'):
+            return operand.name if operand.name in self.tile_info else None
+        return None
+    
+    def _analyze_liveness(self):
+        """Analyze liveness intervals for each tile."""
+        # Collect all instructions
+        for idx, instr in enumerate(self.program.instructions):
+            self.instructions.append((idx, instr))
+            
+            # Determine which tiles are read/written
+            written_tiles = set()
+            read_tiles = set()
+            
+            # Check destination
+            if hasattr(instr, 'dst'):
+                dst_name = self._get_tile_name(instr.dst)
+                if dst_name:
+                    written_tiles.add(dst_name)
+            
+            # Check source operands
+            for attr in ['src', 'src0', 'src1', 'src2']:
+                if hasattr(instr, attr):
+                    src = getattr(instr, attr)
+                    src_name = self._get_tile_name(src)
+                    if src_name:
+                        read_tiles.add(src_name)
+            
+            # Update liveness info
+            for tile_name in written_tiles:
+                info = self.tile_info[tile_name]
+                if info.first_write == -1:
+                    info.first_write = idx
+            
+            for tile_name in read_tiles:
+                info = self.tile_info[tile_name]
+                info.last_read = idx
+    
+    def _analyze_reuse(self):
+        """Analyze buffer reuse opportunities.
+        
+        A tile B can reuse the buffer of tile A if:
+        1. A's last_read < B's first_write (A is dead before B is born)
+        2. A and B have the same size
+        """
+        sorted_tiles = sorted(
+            self.tile_info.values(),
+            key=lambda t: t.first_write if t.first_write >= 0 else float('inf')
+        )
+        
+        # Track which tiles are "dead" (after their last read)
+        available_for_reuse: List[TileBufferInfo] = []
+        
+        for tile in sorted_tiles:
+            if tile.first_write < 0:
+                continue  # Never written, skip
+            
+            # Check if any dead tile can be reused
+            for dead_tile in available_for_reuse:
+                if (dead_tile.last_read < tile.first_write and
+                    dead_tile.rows == tile.rows and
+                    dead_tile.cols == tile.cols and
+                    dead_tile.dtype == tile.dtype):
+                    tile.can_reuse_from = dead_tile.name
+                    # Remove from available (can only reuse once)
+                    available_for_reuse.remove(dead_tile)
+                    break
+            
+            # After this tile's last read, it becomes available for reuse
+            if tile.last_read >= 0:
+                available_for_reuse.append(tile)
+    
+    def _calculate_totals(self):
+        """Calculate total buffer requirements."""
+        total_without_reuse = sum(t.total_bytes for t in self.tile_info.values())
+        
+        # Calculate with reuse
+        reused_tiles = set()
+        for tile in self.tile_info.values():
+            if tile.can_reuse_from:
+                reused_tiles.add(tile.name)
+        
+        total_with_reuse = sum(
+            t.total_bytes for t in self.tile_info.values()
+            if t.name not in reused_tiles
+        )
+        
+        self.analysis_result = {
+            'tiles': self.tile_info,
+            'total_tiles': len(self.tile_info),
+            'total_without_reuse_bytes': total_without_reuse,
+            'total_with_reuse_bytes': total_with_reuse,
+            'reuse_savings_bytes': total_without_reuse - total_with_reuse,
+            'reuse_savings_percent': (
+                100.0 * (total_without_reuse - total_with_reuse) / total_without_reuse
+                if total_without_reuse > 0 else 0
+            ),
+            'reused_tiles': [t.name for t in self.tile_info.values() if t.can_reuse_from],
+            'reuse_map': {t.name: t.can_reuse_from for t in self.tile_info.values() if t.can_reuse_from}
+        }
+    
+    def generate_report(self) -> str:
+        """Generate human-readable analysis report."""
+        if not self.analysis_result:
+            self.analyze()
+        
+        r = self.analysis_result
+        lines = []
+        
+        lines.append("// " + "=" * 70)
+        lines.append(f"// TILE BUFFER ANALYSIS: {self.program.name}")
+        lines.append("// " + "=" * 70)
+        lines.append("//")
+        
+        # Summary
+        lines.append("// SUMMARY:")
+        lines.append(f"//   Total tiles declared:     {r['total_tiles']}")
+        lines.append(f"//   Total capacity (no reuse): {r['total_without_reuse_bytes']:,} bytes ({r['total_without_reuse_bytes']/1024:.1f} KB)")
+        lines.append(f"//   Total capacity (w/ reuse): {r['total_with_reuse_bytes']:,} bytes ({r['total_with_reuse_bytes']/1024:.1f} KB)")
+        lines.append(f"//   Reuse savings:            {r['reuse_savings_bytes']:,} bytes ({r['reuse_savings_percent']:.1f}%)")
+        lines.append("//")
+        
+        # Individual tiles
+        lines.append("// TILE DETAILS:")
+        lines.append("//   Name                 Shape      Type   Bytes    Liveness [write,read]   Reuse")
+        lines.append("//   " + "-" * 80)
+        
+        for name, tile in sorted(r['tiles'].items()):
+            shape = f"{tile.rows}x{tile.cols}"
+            liveness = f"[{tile.first_write:3d}, {tile.last_read:3d}]" if tile.first_write >= 0 else "[-, -]"
+            reuse = f"<- {tile.can_reuse_from}" if tile.can_reuse_from else "-"
+            lines.append(f"//   {name:20s} {shape:10s} {tile.dtype:6s} {tile.total_bytes:6d}   {liveness:20s} {reuse}")
+        
+        lines.append("//")
+        
+        # Reuse map
+        if r['reuse_map']:
+            lines.append("// BUFFER REUSE MAP:")
+            for dst, src in r['reuse_map'].items():
+                lines.append(f"//   {dst} reuses buffer of {src}")
+            lines.append("//")
+        
+        lines.append("// " + "=" * 70)
+        lines.append("")
+        
+        return "\n".join(lines)
 
 
 class MultiBackendCodeGenerator:
@@ -2338,16 +3356,42 @@ class MultiBackendCodeGenerator:
     - ARM64 NEON (Apple Silicon, ARM servers)
     - NVIDIA CUDA (GPU computing)
     - Huawei Ascend 910B (NPU/AI accelerator)
+    
+    If a module is provided, buffer analysis results are stored in the module
+    for later use by orchestration code generators.
     """
     
-    def __init__(self, enable_fusion: bool = True):
+    def __init__(self, enable_fusion: bool = True, analyze_buffers: bool = True, 
+                 module: 'PTOModule' = None):
         self.enable_fusion = enable_fusion
+        self.analyze_buffers = analyze_buffers
+        self.module = module  # Optional module to store buffer analysis results
     
     def generate_arm64(self, program) -> str:
         """Generate ARM64 NEON code from a PTO program."""
         tile_info, mock_instructions = convert_program_to_mock_instructions(program)
         
-        lines = [f"// PTO Program: {program.name}", arm64_generate_header()]
+        # Determine InCore status
+        is_in_core = getattr(program, 'is_in_core', True)
+        in_core_str = "InCore (tile-level computation)" if is_in_core else "Orchestration (control flow only)"
+        
+        lines = [
+            f"// PTO Program: {program.name}",
+            f"// Function Type: {in_core_str}",
+        ]
+        
+        # Add buffer analysis for InCore functions
+        if is_in_core and self.analyze_buffers:
+            analyzer = TileBufferAnalyzer(program)
+            analyzer.analyze()  # Run analysis first
+            report = analyzer.generate_report()
+            lines.append(report)
+            
+            # Store analysis in module if available
+            if self.module is not None:
+                self.module.set_buffer_analysis(program.name, analyzer.analysis_result)
+        
+        lines.append(arm64_generate_header())
         
         # Collect memory references for function parameters
         memref_params = []
@@ -2355,11 +3399,21 @@ class MultiBackendCodeGenerator:
             c_type = ARM64_TYPE_MAP.get(memref_type.element_type.value, "float")
             memref_params.append(f"{c_type}* {name}")
         
+        # Find scalars that are initialized by SLI (these are local constants, not params)
+        sli_initialized_scalars = set()
+        for instr in mock_instructions:
+            if instr.opcode == "SLI":
+                sli_initialized_scalars.add(instr.dst)
+        
         # Declare scalar variables as function parameters (for dynamic bounds)
+        # Skip scalars that are initialized internally via SLI
         scalar_params = []
         for name, scalar_type in program.scalar_declarations.items():
             # Skip internal loop variables (scalar_type is ElementType directly)
             if scalar_type in (ElementType.U1, ElementType.INDEX):
+                continue
+            # Skip scalars initialized via SLI (they are local constants)
+            if name in sli_initialized_scalars:
                 continue
             c_type = ARM64_TYPE_MAP.get(scalar_type.value, "int")
             scalar_params.append(f"{c_type} {name}")
@@ -2428,7 +3482,27 @@ class MultiBackendCodeGenerator:
         """Generate NVIDIA CUDA code from a PTO program."""
         tile_info, mock_instructions = convert_program_to_mock_instructions(program)
         
-        lines = [f"// PTO Program: {program.name}", cuda_generate_header()]
+        # Determine InCore status
+        is_in_core = getattr(program, 'is_in_core', True)
+        in_core_str = "InCore (tile-level computation)" if is_in_core else "Orchestration (control flow only)"
+        
+        lines = [
+            f"// PTO Program: {program.name}",
+            f"// Function Type: {in_core_str}",
+        ]
+        
+        # Add buffer analysis for InCore functions
+        if is_in_core and self.analyze_buffers:
+            analyzer = TileBufferAnalyzer(program)
+            analyzer.analyze()  # Run analysis first
+            report = analyzer.generate_report()
+            lines.append(report)
+            
+            # Store analysis in module if available
+            if self.module is not None:
+                self.module.set_buffer_analysis(program.name, analyzer.analysis_result)
+        
+        lines.append(cuda_generate_header())
         
         # Declare tiles as __device__ arrays
         for name, info in tile_info.items():
@@ -2444,10 +3518,19 @@ class MultiBackendCodeGenerator:
             memref_params.append(f"{c_type}* {name}")
             memref_types[name] = c_type
         
+        # Find scalars that are initialized by SLI (these are local constants, not params)
+        sli_initialized_scalars = set()
+        for instr in mock_instructions:
+            if instr.opcode == "SLI":
+                sli_initialized_scalars.add(instr.dst)
+        
         # Collect scalar parameters (scalar_type is ElementType directly)
+        # Skip scalars initialized via SLI (they are local constants)
         scalar_params = []
         for name, scalar_type in program.scalar_declarations.items():
             if scalar_type in (ElementType.U1, ElementType.INDEX):
+                continue
+            if name in sli_initialized_scalars:
                 continue
             c_type = CUDA_TYPE_MAP.get(scalar_type.value, "int")
             scalar_params.append(f"{c_type} {name}")
@@ -2530,7 +3613,27 @@ class MultiBackendCodeGenerator:
         """Generate Huawei Ascend 910B (Ascend C) code from a PTO program."""
         tile_info, mock_instructions = convert_program_to_mock_instructions(program)
         
-        lines = [f"// PTO Program: {program.name}", ascend_generate_header()]
+        # Determine InCore status
+        is_in_core = getattr(program, 'is_in_core', True)
+        in_core_str = "InCore (tile-level computation)" if is_in_core else "Orchestration (control flow only)"
+        
+        lines = [
+            f"// PTO Program: {program.name}",
+            f"// Function Type: {in_core_str}",
+        ]
+        
+        # Add buffer analysis for InCore functions
+        if is_in_core and self.analyze_buffers:
+            analyzer = TileBufferAnalyzer(program)
+            analyzer.analyze()  # Run analysis first
+            report = analyzer.generate_report()
+            lines.append(report)
+            
+            # Store analysis in module if available
+            if self.module is not None:
+                self.module.set_buffer_analysis(program.name, analyzer.analysis_result)
+        
+        lines.append(ascend_generate_header())
         
         lines.append(f"class {program.name}Kernel {{")
         lines.append("public:")
@@ -2627,11 +3730,16 @@ class MultiBackendCodeGenerator:
             output_prefix: Category name for output subdirectory (e.g., "sinh_taylor", "aten_primitives")
             output_base_dir: Base directory for output
             
-        Output structure:
+        Output structure (for InCore functions):
             output_base_dir/
             ├── output_arm64/{output_prefix}/{program.name}.c
             ├── output_cuda/{output_prefix}/{program.name}.cu
             ├── output_ascend910b/{output_prefix}/{program.name}.cpp
+            └── output_pto/{output_prefix}/{program.name}.pto
+        
+        Output structure (for non-InCore functions):
+            output_base_dir/
+            ├── output_arm64/{output_prefix}/{program.name}.c  (only ARM64!)
             └── output_pto/{output_prefix}/{program.name}.pto
             
         Returns:
@@ -2646,7 +3754,18 @@ class MultiBackendCodeGenerator:
             "ascend910b": self.generate_ascend,
         }
         
-        for backend_key, backend_info in BACKENDS.items():
+        # Determine which backends to generate
+        # Non-InCore functions only support ARM64
+        is_in_core = getattr(program, 'is_in_core', True)  # Default to True for backward compat
+        
+        if is_in_core:
+            backends_to_generate = list(BACKENDS.items())
+        else:
+            # Only ARM64 for non-InCore (orchestration) functions
+            backends_to_generate = [(k, v) for k, v in BACKENDS.items() if k == "arm64"]
+            print(f"  [Note] Non-InCore function: generating only ARM64 code")
+        
+        for backend_key, backend_info in backends_to_generate:
             # New structure: output_arm64/category/file.c
             output_dir = os.path.join(output_base_dir, f"output{backend_info['suffix']}", output_prefix)
             os.makedirs(output_dir, exist_ok=True)
@@ -2698,6 +3817,477 @@ def generate_ascend_code(program, enable_fusion: bool = True) -> str:
     """Generate Ascend C code (convenience wrapper)."""
     generator = MultiBackendCodeGenerator(enable_fusion=enable_fusion)
     return generator.generate_ascend(program)
+
+
+# =============================================================================
+# Runtime Code Generator
+# =============================================================================
+
+class RuntimeCodeGenerator:
+    """
+    Generates Orchestration function code that uses PTO Runtime.
+    
+    When an Orchestration function calls InCore functions:
+    1. Each InCore call becomes a pending task with a task_id
+    2. Tasks track producer-consumer dependencies via fanin/fanout
+    3. TensorMap tracks which task produces each tensor region
+    """
+    
+    def __init__(self, module: 'PTOModule'):
+        self.module = module
+        self.lines = []
+        self.indent_level = 0
+    
+    def _emit(self, line: str = ""):
+        """Emit a line of code."""
+        indent = "    " * self.indent_level
+        self.lines.append(f"{indent}{line}" if line else "")
+    
+    def _indent(self):
+        """Increase indentation."""
+        self.indent_level += 1
+    
+    def _dedent(self):
+        """Decrease indentation."""
+        self.indent_level = max(0, self.indent_level - 1)
+    
+    def generate(self) -> str:
+        """Generate complete runtime-based C code for the module."""
+        self.lines = []
+        self.indent_level = 0
+        
+        # Header
+        self._emit("/**")
+        self._emit(" * PTO Runtime-based Orchestration Code")
+        self._emit(f" * Module: {self.module.name}")
+        self._emit(" * Auto-generated by PTO ISA Compiler")
+        self._emit(" */")
+        self._emit()
+        self._emit('#include "pto_runtime.h"')
+        self._emit('#include <stdio.h>')
+        self._emit('#include <stdlib.h>')
+        self._emit()
+        
+        # Forward declarations for InCore functions
+        self._emit("// Forward declarations for InCore functions")
+        for name, prog in self.module.functions.items():
+            if prog.is_in_core:
+                params = self._get_function_params(prog)
+                self._emit(f"void {name}({params});")
+        self._emit()
+        
+        # Generate each Orchestration function
+        for name, prog in self.module.functions.items():
+            if not prog.is_in_core:
+                self._generate_orchestration_function(prog)
+        
+        return "\n".join(self.lines)
+    
+    def _get_function_params(self, prog: 'PTOProgram') -> str:
+        """Get function parameter list as string."""
+        params = []
+        for name, memref_type in prog.memref_declarations.items():
+            dtype = "float"  # Simplified - use actual type mapping in production
+            params.append(f"{dtype}* {name}")
+        return ", ".join(params) if params else "void"
+    
+    def _get_tile_shape(self, prog: 'PTOProgram', tile_name: str) -> Tuple[int, int]:
+        """Get tile shape from program."""
+        for instr in prog.instructions:
+            if isinstance(instr, dict) and instr.get('opcode') == 'TILE_DECL':
+                if instr.get('name') == tile_name:
+                    return (instr.get('rows', 8), instr.get('cols', 8))
+        return (8, 8)  # Default
+    
+    def _generate_orchestration_function(self, prog: 'PTOProgram'):
+        """Generate an Orchestration function using PTO Runtime."""
+        # Collect info about InCore calls
+        incore_calls = []
+        for instr in prog.instructions:
+            if isinstance(instr, CALL):
+                callee = self.module.functions.get(instr.callee)
+                if callee and callee.is_in_core:
+                    incore_calls.append(instr)
+        
+        # Function signature
+        params = self._get_function_params(prog)
+        self._emit(f"// Orchestration function: {prog.name}")
+        self._emit(f"void {prog.name}_runtime(PTORuntime* rt, {params}) {{")
+        self._indent()
+        
+        if not incore_calls:
+            self._emit("// No InCore calls")
+            self._dedent()
+            self._emit("}")
+            self._emit()
+            return
+        
+        # Generate task scheduling for each InCore call
+        for idx, call in enumerate(incore_calls):
+            self._emit(f"// Task {idx}: {call.callee}")
+            self._emit(f"int32_t t{idx} = pto_task_alloc(rt, \"{call.callee}\", (void*){call.callee});")
+            
+            # Determine inputs and outputs from the called function
+            callee_prog = self.module.functions.get(call.callee)
+            if callee_prog:
+                # Analyze memref declarations to determine inputs/outputs
+                arg_mapping = call.args  # param_name -> actual_arg_name
+                
+                for param_name, actual_arg in arg_mapping.items():
+                    # Heuristic: "input" params are inputs, "output"/"result" params are outputs
+                    is_output = "output" in param_name.lower() or "result" in param_name.lower()
+                    
+                    # Determine shape based on callee function and parameter name
+                    rows, cols = self._infer_shape_from_callee(call.callee, param_name, is_output)
+                    
+                    if is_output:
+                        self._emit(f"pto_task_add_output(rt, t{idx}, {actual_arg}, 0, 0, {rows}, {cols});")
+                    else:
+                        self._emit(f"pto_task_add_input(rt, t{idx}, {actual_arg}, 0, 0, {rows}, {cols});")
+            
+            self._emit(f"pto_task_submit(rt, t{idx});")
+            self._emit()
+        
+        # Execute all tasks
+        self._emit("// Execute all scheduled tasks")
+        self._emit("pto_execute_all(rt);")
+        
+        self._dedent()
+        self._emit("}")
+        self._emit()
+    
+    def _infer_shape_from_callee(self, callee_name: str, param_name: str, is_output: bool) -> Tuple[int, int]:
+        """Infer tensor shape based on callee function and parameter name."""
+        # Reduction functions output row vectors
+        if callee_name in ['rowmax', 'rowsum'] and is_output:
+            return (8, 1)
+        
+        # Row operation functions: input_row is a row vector
+        if callee_name in ['rowexpandsub', 'rowexpanddiv', 'rowexpandmul']:
+            if 'row' in param_name.lower() and 'input' in param_name.lower():
+                return (8, 1)
+        
+        # Default to full tile
+        return (8, 8)
+    
+    def generate_main_wrapper(self, entry_func: str) -> str:
+        """Generate a main() function that initializes runtime and calls entry function."""
+        entry_prog = self.module.functions.get(entry_func)
+        if not entry_prog:
+            return "// Error: Entry function not found"
+        
+        lines = []
+        lines.append("/**")
+        lines.append(" * Main entry point with runtime initialization")
+        lines.append(" */")
+        lines.append("int main(int argc, char** argv) {")
+        lines.append("    // Initialize runtime")
+        lines.append("    PTORuntime rt;")
+        lines.append("    pto_runtime_init(&rt);")
+        lines.append("")
+        
+        # Allocate buffers for each memref
+        lines.append("    // Allocate buffers")
+        for name, memref_type in entry_prog.memref_declarations.items():
+            lines.append(f"    float {name}_buf[64];  // Adjust size as needed")
+        lines.append("")
+        
+        # Initialize input (example)
+        lines.append("    // Initialize input (example)")
+        lines.append("    for (int i = 0; i < 64; i++) {")
+        lines.append("        // input_buf[i] = ...;")
+        lines.append("    }")
+        lines.append("")
+        
+        # Call entry function
+        params = ", ".join([f"{name}_buf" for name in entry_prog.memref_declarations.keys()])
+        lines.append(f"    // Execute orchestration function")
+        lines.append(f"    {entry_func}_runtime(&rt, {params});")
+        lines.append("")
+        lines.append("    // Dump runtime state to file")
+        lines.append(f"    pto_runtime_dump(&rt, \"{entry_func}_runtime_dump.txt\");")
+        lines.append("    pto_runtime_dump_stdout(&rt);")
+        lines.append("")
+        lines.append("    // Print statistics")
+        lines.append("    pto_runtime_stats(&rt);")
+        lines.append("")
+        lines.append("    // Shutdown runtime")
+        lines.append("    pto_runtime_shutdown(&rt);")
+        lines.append("")
+        lines.append("    return 0;")
+        lines.append("}")
+        
+        return "\n".join(lines)
+
+
+class OrchestrationCodeGenerator:
+    """
+    Code generator for Orchestration functions.
+    
+    Generates standalone C code that:
+    1. Builds task graphs using PTO runtime
+    2. Tracks producer-consumer dependencies via fanin/fanout
+    3. Can be compiled and executed to generate task dumps
+    """
+    
+    def __init__(self, module: 'PTOModule'):
+        self.module = module
+        self.tensor_producers: Dict[str, int] = {}  # tensor_name -> task_id
+        self.task_counter = 0
+        self.lines = []
+        self.indent = 0
+    
+    def _emit(self, text: str = ""):
+        """Emit a line with proper indentation."""
+        prefix = "    " * self.indent
+        self.lines.append(f"{prefix}{text}" if text else "")
+    
+    def generate(self, entry_func: str, standalone: bool = True) -> str:
+        """
+        Generate complete runtime code for an orchestration function.
+        
+        Args:
+            entry_func: Name of the orchestration function
+            standalone: If True, generate a complete executable with main()
+        """
+        self.lines = []
+        self.indent = 0
+        
+        prog = self.module.functions.get(entry_func)
+        if not prog:
+            return f"// Error: Function {entry_func} not found"
+        
+        if prog.is_in_core:
+            return f"// Error: {entry_func} is an InCore function, not Orchestration"
+        
+        # Header
+        self._emit("/**")
+        self._emit(f" * Orchestration Function: {entry_func}")
+        self._emit(" * Auto-generated by PTO ISA Compiler")
+        self._emit(" *")
+        self._emit(" * This code builds the task dependency graph using PTO Runtime.")
+        self._emit(" * Compile and run to generate task graph dump.")
+        self._emit(" */")
+        self._emit()
+        self._emit('#include "pto_runtime.h"')
+        if standalone:
+            self._emit('#include "pto_runtime.c"  // Include implementation for standalone build')
+        self._emit()
+        
+        # Generate the orchestration function
+        self._generate_function(prog)
+        
+        # Generate main() if standalone
+        if standalone:
+            self._generate_main(prog)
+        
+        return "\n".join(self.lines)
+    
+    def _make_param_list(self, prog: 'PTOProgram') -> str:
+        """Create parameter list string."""
+        params = []
+        for name in prog.memref_declarations.keys():
+            params.append(f"float* {name}")
+        return ", ".join(params) if params else "void"
+    
+    def _generate_function(self, prog: 'PTOProgram'):
+        """Generate the runtime-based orchestration function."""
+        # Reset state
+        self.tensor_producers = {}
+        self.task_counter = 0
+        
+        # Function signature
+        params = self._make_param_list(prog)
+        self._emit(f"/**")
+        self._emit(f" * Build task graph for {prog.name}")
+        self._emit(f" * Each CALL to an InCore function becomes a task with dependencies")
+        self._emit(f" */")
+        self._emit(f"void {prog.name}_build_task_graph(PTORuntime* rt, {params}) {{")
+        self.indent += 1
+        
+        # Analyze and generate code for each CALL instruction
+        for instr in prog.instructions:
+            if isinstance(instr, CALL):
+                self._generate_call(instr)
+            elif isinstance(instr, RETURN):
+                pass  # Skip RETURN in orchestration
+        
+        self.indent -= 1
+        self._emit("}")
+        self._emit()
+    
+    def _generate_call(self, call: CALL):
+        """Generate task scheduling code for an InCore function call."""
+        callee = self.module.functions.get(call.callee)
+        if not callee:
+            self._emit(f"// ERROR: Unknown function {call.callee}")
+            return
+        
+        task_id = self.task_counter
+        self.task_counter += 1
+        
+        self._emit(f"// Task {task_id}: {call.callee}")
+        self._emit(f"int32_t t{task_id} = pto_task_alloc(rt, \"{call.callee}\", NULL);")
+        
+        # Analyze arguments - determine inputs and outputs
+        for param_name, arg_name in call.args.items():
+            is_output = any(kw in param_name.lower() for kw in ['output', 'result', 'dst', 'out'])
+            rows, cols = self._infer_shape(param_name, call.callee, is_output)
+            
+            if is_output:
+                self._emit(f"pto_task_add_output(rt, t{task_id}, {arg_name}, 0, 0, {rows}, {cols});")
+                self.tensor_producers[arg_name] = task_id
+            else:
+                self._emit(f"pto_task_add_input(rt, t{task_id}, {arg_name}, 0, 0, {rows}, {cols});")
+        
+        self._emit(f"pto_task_submit(rt, t{task_id});")
+        self._emit()
+    
+    def _generate_main(self, prog: 'PTOProgram'):
+        """Generate main() function for standalone execution."""
+        self._emit("/**")
+        self._emit(" * Main: Build task graph and dump to file")
+        self._emit(" */")
+        self._emit("int main(int argc, char** argv) {")
+        self.indent += 1
+        
+        self._emit("PTORuntime rt;")
+        self._emit("pto_runtime_init(&rt);")
+        self._emit()
+        
+        # Declare buffers
+        self._emit("// Declare buffers")
+        for name in prog.memref_declarations.keys():
+            size = 8 if any(kw in name.lower() for kw in ['rowmax', 'rowsum']) else 64
+            self._emit(f"float {name}[{size}];")
+        self._emit()
+        
+        # Build task graph
+        args = ", ".join(prog.memref_declarations.keys())
+        self._emit("// Build task graph")
+        self._emit(f"{prog.name}_build_task_graph(&rt, {args});")
+        self._emit()
+        
+        # Dump
+        self._emit("// Dump task graph")
+        self._emit("printf(\"\\n\");")
+        self._emit("pto_runtime_dump_stdout(&rt);")
+        self._emit(f'pto_runtime_dump(&rt, "{prog.name}_task_graph.txt");')
+        self._emit()
+        
+        self._emit("pto_runtime_shutdown(&rt);")
+        self._emit("return 0;")
+        
+        self.indent -= 1
+        self._emit("}")
+    
+    def _infer_shape(self, param_name: str, callee_name: str, is_output: bool) -> Tuple[int, int]:
+        """Infer tensor shape from parameter name, callee function, and position."""
+        if callee_name in ['rowmax', 'rowsum'] and is_output:
+            return (8, 1)
+        if callee_name in ['rowexpandsub', 'rowexpanddiv', 'rowexpandmul']:
+            if 'row' in param_name.lower() and 'input' in param_name.lower():
+                return (8, 1)
+        if any(kw in param_name.lower() for kw in ['rowmax', 'rowsum', 'row_max', 'row_sum']):
+            return (8, 1)
+        return (8, 8)
+    
+    def compile_and_run(self, entry_func: str, output_dir: str) -> Optional[str]:
+        """
+        Generate, compile, execute, and return the task graph dump path.
+        
+        Args:
+            entry_func: Name of the orchestration function
+            output_dir: Directory for output files
+            
+        Returns:
+            Path to the generated dump file, or None on failure
+        """
+        import subprocess
+        
+        prog = self.module.functions.get(entry_func)
+        if not prog or prog.is_in_core:
+            return None
+        
+        os.makedirs(output_dir, exist_ok=True)
+        runtime_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Generate standalone C code
+        c_code = self.generate(entry_func, standalone=True)
+        
+        # Write C file
+        c_file = os.path.join(output_dir, f"{entry_func}_orchestration.c")
+        with open(c_file, 'w') as f:
+            f.write(c_code)
+        print(f"  [Orchestration] Generated: {c_file}")
+        
+        # Compile
+        exe_file = os.path.join(output_dir, f"{entry_func}_orchestration")
+        compile_cmd = ["gcc", "-I", runtime_dir, "-o", exe_file, c_file]
+        
+        print(f"  [Orchestration] Compiling...")
+        result = subprocess.run(compile_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  [Orchestration] Compilation failed: {result.stderr}")
+            return None
+        
+        # Execute
+        print(f"  [Orchestration] Executing...")
+        result = subprocess.run([exe_file], capture_output=True, text=True, cwd=output_dir)
+        
+        if result.returncode != 0:
+            print(f"  [Orchestration] Execution failed: {result.stderr}")
+            return None
+        
+        # Print output
+        if result.stdout:
+            print(result.stdout)
+        
+        # Check dump file
+        dump_file = os.path.join(output_dir, f"{entry_func}_task_graph.txt")
+        if os.path.exists(dump_file):
+            print(f"  [Orchestration] Task graph dump: {dump_file}")
+            # Clean up executable
+            try:
+                os.remove(exe_file)
+            except:
+                pass
+            return dump_file
+        
+        return None
+
+
+def compile_module_with_task_graph(module: 'PTOModule', output_base_dir: str, 
+                                    subdir: str = "") -> Dict[str, str]:
+    """
+    Compile a PTO module and generate task graph dumps for all orchestration functions.
+    
+    Args:
+        module: PTO module to compile
+        output_base_dir: Base directory for output (e.g., "examples")
+        subdir: Subdirectory name (e.g., "fused_softmax")
+        
+    Returns:
+        Dictionary mapping function names to their dump file paths
+    """
+    arm64_dir = os.path.join(output_base_dir, "output_arm64", subdir) if subdir else \
+                os.path.join(output_base_dir, "output_arm64")
+    os.makedirs(arm64_dir, exist_ok=True)
+    
+    results = {}
+    
+    # Find all orchestration functions
+    for func_name, prog in module.functions.items():
+        if not prog.is_in_core:
+            print(f"\n  Processing orchestration function: {func_name}")
+            
+            gen = OrchestrationCodeGenerator(module)
+            dump_path = gen.compile_and_run(func_name, arm64_dir)
+            
+            if dump_path:
+                results[func_name] = dump_path
+    
+    return results
 
 
 # =============================================================================

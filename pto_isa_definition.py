@@ -3459,6 +3459,55 @@ class YIELD(ControlFlowInstruction):
 
 
 # =============================================================================
+# Function Call Instructions
+# =============================================================================
+
+@dataclass
+class CALL(ControlFlowInstruction):
+    """
+    Call a function with arguments.
+    
+    Arguments are passed as a mapping from parameter names to actual arguments.
+    The callee function name is used to resolve the function at link time.
+    
+    Example:
+        CALL @sigmoid(%input -> %x, %output -> %y)
+    """
+    callee: str  # Function name to call
+    args: Dict[str, str] = field(default_factory=dict)  # param_name -> actual_arg_name
+    
+    @property
+    def opcode(self) -> str:
+        return "CALL"
+    
+    def to_pto_as(self) -> str:
+        if self.args:
+            args_str = ", ".join(f"%{param} -> %{arg}" for param, arg in self.args.items())
+            return f"CALL @{self.callee}({args_str})"
+        return f"CALL @{self.callee}()"
+
+
+@dataclass
+class RETURN(ControlFlowInstruction):
+    """
+    Return from a function.
+    
+    Optionally returns values (for functions with return values).
+    """
+    values: Optional[List[str]] = None  # Optional return values
+    
+    @property
+    def opcode(self) -> str:
+        return "RETURN"
+    
+    def to_pto_as(self) -> str:
+        if self.values:
+            vals = ", ".join(f"%{v}" for v in self.values)
+            return f"RETURN ({vals})"
+        return "return"
+
+
+# =============================================================================
 # Loop Constructs for DSL - 1 Level and 2 Level Nested Loops
 # =============================================================================
 
@@ -3687,6 +3736,8 @@ CONTROL_FLOW_INSTRUCTIONS = {
     "BREAK": BREAK,
     "CONTINUE": CONTINUE,
     "YIELD": YIELD,
+    "CALL": CALL,
+    "RETURN": RETURN,
 }
 
 ALL_INSTRUCTIONS = {

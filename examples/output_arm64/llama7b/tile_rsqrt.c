@@ -1,0 +1,54 @@
+// PTO Program: tile_rsqrt
+// Function Type: InCore (tile-level computation)
+// ======================================================================
+// TILE BUFFER ANALYSIS: tile_rsqrt
+// ======================================================================
+//
+// SUMMARY:
+//   Total tiles declared:     2
+//   Total capacity (no reuse): 32,768 bytes (32.0 KB)
+//   Total capacity (w/ reuse): 32,768 bytes (32.0 KB)
+//   Reuse savings:            0 bytes (0.0%)
+//
+// TILE DETAILS:
+//   Name                 Shape      Type   Bytes    Liveness [write,read]   Reuse
+//   --------------------------------------------------------------------------------
+//   result               32x128     f32     16384   [  1,   2]           -
+//   x                    32x128     f32     16384   [  0,   1]           -
+//
+// ======================================================================
+
+// Auto-generated ARM64 NEON code from PTO ISA Compiler
+#include <arm_neon.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+
+void tile_rsqrt(float* input, float* output) {
+    float x[32][128];
+    float result[32][128];
+
+    // Loop fusion: 2 loop overheads saved
+
+    // FUSED LOOP (3 ops): x=TLOAD(input,0,0); result=TRSQRT(x); output=TSTORE(result,0,0)
+    for (int _row = 0; _row < 32; _row++) {
+        int _col;
+        // Vectorized loop
+        for (_col = 0; _col + 4 <= 128; _col += 4) {
+            float32x4_t _vl0 = vld1q_f32(&input[_row * 128 + _col]);
+            vst1q_f32(&x[_row][_col], _vl0);
+            float32x4_t _v1 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr2 = vrsqrteq_f32(_v1);
+            vst1q_f32(&result[_row][_col], _vr2);
+            float32x4_t _vs3 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 128 + _col], _vs3);
+        }
+        // Scalar cleanup
+        for (; _col < 128; _col++) {
+            x[_row][_col] = input[_row * 128 + _col];
+            result[_row][_col] = 1.0f / sqrtf(x[_row][_col]);
+            output[_row * 128 + _col] = result[_row][_col];
+        }
+    }
+
+}

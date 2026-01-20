@@ -1,0 +1,427 @@
+================================================================================
+PTO RUNTIME DUMP
+================================================================================
+
+SUMMARY
+--------------------------------------------------------------------------------
+  Total tasks scheduled:  10
+  Total tasks completed:  0
+  Active task count:      10
+  Next task ID:           10
+  Ready queue size:       2
+
+================================================================================
+TASK TABLE (pend_task)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 0
+--------------------------------------------------------------------------------
+  Function:     rowmax
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 0
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 1
+    fanout[] = [1]
+    Consumers:
+      -> Task 1 (rowexpandsub)
+
+  ARGUMENTS (num_args = 2)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80ebd8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] OUTPUT:
+        tensor:     0x16b80eab8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+
+--------------------------------------------------------------------------------
+TASK 1
+--------------------------------------------------------------------------------
+  Function:     rowexpandsub
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 1
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 1
+    fanout[] = [2]
+    Consumers:
+      -> Task 2 (elem_exp)
+
+  ARGUMENTS (num_args = 3)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80ebd8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] INPUT:
+        tensor:     0x16b80eab8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+    [2] OUTPUT:
+        tensor:     0x16b80e9b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+
+--------------------------------------------------------------------------------
+TASK 2
+--------------------------------------------------------------------------------
+  Function:     elem_exp
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 1
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 2
+    fanout[] = [3, 4]
+    Consumers:
+      -> Task 3 (rowsum)
+      -> Task 4 (rowexpanddiv)
+
+  ARGUMENTS (num_args = 2)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80e9b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] OUTPUT:
+        tensor:     0x16b80e8b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+
+--------------------------------------------------------------------------------
+TASK 3
+--------------------------------------------------------------------------------
+  Function:     rowsum
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 1
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 1
+    fanout[] = [4]
+    Consumers:
+      -> Task 4 (rowexpanddiv)
+
+  ARGUMENTS (num_args = 2)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80e8b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] OUTPUT:
+        tensor:     0x16b80e898
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+
+--------------------------------------------------------------------------------
+TASK 4
+--------------------------------------------------------------------------------
+  Function:     rowexpanddiv
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 2
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 0
+    fanout[] = [] (no consumers)
+
+  ARGUMENTS (num_args = 3)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80e8b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] INPUT:
+        tensor:     0x16b80e898
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+    [2] OUTPUT:
+        tensor:     0x16b80ead8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+
+--------------------------------------------------------------------------------
+TASK 5
+--------------------------------------------------------------------------------
+  Function:     rowmax
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 0
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 1
+    fanout[] = [6]
+    Consumers:
+      -> Task 6 (rowexpandsub)
+
+  ARGUMENTS (num_args = 2)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80ebd8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] OUTPUT:
+        tensor:     0x16b80eab8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+
+--------------------------------------------------------------------------------
+TASK 6
+--------------------------------------------------------------------------------
+  Function:     rowexpandsub
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 1
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 1
+    fanout[] = [7]
+    Consumers:
+      -> Task 7 (elem_exp)
+
+  ARGUMENTS (num_args = 3)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80ebd8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] INPUT:
+        tensor:     0x16b80eab8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+    [2] OUTPUT:
+        tensor:     0x16b80e9b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+
+--------------------------------------------------------------------------------
+TASK 7
+--------------------------------------------------------------------------------
+  Function:     elem_exp
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 1
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 2
+    fanout[] = [8, 9]
+    Consumers:
+      -> Task 8 (rowsum)
+      -> Task 9 (rowexpanddiv)
+
+  ARGUMENTS (num_args = 2)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80e9b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] OUTPUT:
+        tensor:     0x16b80e8b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+
+--------------------------------------------------------------------------------
+TASK 8
+--------------------------------------------------------------------------------
+  Function:     rowsum
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 1
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 1
+    fanout[] = [9]
+    Consumers:
+      -> Task 9 (rowexpanddiv)
+
+  ARGUMENTS (num_args = 2)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80e8b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] OUTPUT:
+        tensor:     0x16b80e898
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+
+--------------------------------------------------------------------------------
+TASK 9
+--------------------------------------------------------------------------------
+  Function:     rowexpanddiv
+  Func Ptr:     0x0
+  Is Active:    true
+  Is Complete:  false
+
+  FANIN COUNTER
+  -------------
+    fanin = 2
+
+  FANOUT LIST (consumers that depend on this task)
+  ------------------------------------------------
+    fanout_count = 0
+    fanout[] = [] (no consumers)
+
+  ARGUMENTS (num_args = 3)
+  -------------------------
+    [0] INPUT:
+        tensor:     0x16b80e8b8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+    [1] INPUT:
+        tensor:     0x16b80e898
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       1
+    [2] OUTPUT:
+        tensor:     0x16b80ead8
+        row_offset: 0
+        col_offset: 0
+        rows:       8
+        cols:       8
+
+================================================================================
+READY QUEUE
+================================================================================
+
+  Head:  0
+  Tail:  2
+  Count: 2
+  Queue: [0, 5]
+
+================================================================================
+TENSOR MAP (non-empty buckets)
+================================================================================
+
+  [bucket 2281] tensor=0x16b80e8b8, offset=[0,0], shape=[8,8] -> producer: Task 7
+  [bucket 2294] tensor=0x16b80e898, offset=[0,0], shape=[8,1] -> producer: Task 8
+  [bucket 2537] tensor=0x16b80e9b8, offset=[0,0], shape=[8,8] -> producer: Task 6
+  [bucket 2697] tensor=0x16b80ead8, offset=[0,0], shape=[8,8] -> producer: Task 9
+  [bucket 2774] tensor=0x16b80eab8, offset=[0,0], shape=[8,1] -> producer: Task 5
+
+  Total tensor entries: 5
+
+================================================================================
+DEPENDENCY GRAPH (Producer -> Consumer)
+================================================================================
+
+  Task 0 (rowmax) [READY]
+    └──> Task 1 (rowexpandsub)
+  Task 1 (rowexpandsub) [WAIT]
+    └──> Task 2 (elem_exp)
+  Task 2 (elem_exp) [WAIT]
+    └──> Task 3 (rowsum)
+    └──> Task 4 (rowexpanddiv)
+  Task 3 (rowsum) [WAIT]
+    └──> Task 4 (rowexpanddiv)
+  Task 4 (rowexpanddiv) [WAIT]
+  Task 5 (rowmax) [READY]
+    └──> Task 6 (rowexpandsub)
+  Task 6 (rowexpandsub) [WAIT]
+    └──> Task 7 (elem_exp)
+  Task 7 (elem_exp) [WAIT]
+    └──> Task 8 (rowsum)
+    └──> Task 9 (rowexpanddiv)
+  Task 8 (rowsum) [WAIT]
+    └──> Task 9 (rowexpanddiv)
+  Task 9 (rowexpanddiv) [WAIT]
+
+================================================================================
+END OF DUMP
+================================================================================
