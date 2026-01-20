@@ -40,6 +40,14 @@ private:
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation
 
+        // FUSED (1 ops): TLOAD
+        // TLOAD: Operation
+
+        // BARRIER: TROWSUM
+
+        // FUSED (1 ops): TSTORE
+        // TSTORE: Operation
+
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);
     }

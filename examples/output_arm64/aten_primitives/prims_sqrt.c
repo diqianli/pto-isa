@@ -6,29 +6,39 @@
 #include <stdio.h>
 
 void prims_sqrt(float* input, float* output) {
-    float x[8][8];
-    float result[8][8];
+    float x[1][4096];
+    float result[1][4096];
 
-    // Loop fusion: 2 loop overheads saved
+    // Loop fusion: 5 loop overheads saved
 
-    // FUSED LOOP (3 ops): x=TLOAD(input,0,0); result=TSQRT(x); output=TSTORE(result,0,0)
-    for (int _row = 0; _row < 8; _row++) {
+    // FUSED LOOP (6 ops): x=TLOAD(input,0,0); result=TSQRT(x); output=TSTORE(result,0,0); x=TLOAD(input,0,0); result=TSQRT(x); output=TSTORE(result,0,0)
+    for (int _row = 0; _row < 1; _row++) {
         int _col;
         // Vectorized loop
-        for (_col = 0; _col + 4 <= 8; _col += 4) {
-            float32x4_t _vl0 = vld1q_f32(&input[_row * 8 + _col]);
+        for (_col = 0; _col + 4 <= 4096; _col += 4) {
+            float32x4_t _vl0 = vld1q_f32(&input[_row * 4096 + _col]);
             vst1q_f32(&x[_row][_col], _vl0);
             float32x4_t _v1 = vld1q_f32(&x[_row][_col]);
             float32x4_t _vr2 = vsqrtq_f32(_v1);
             vst1q_f32(&result[_row][_col], _vr2);
             float32x4_t _vs3 = vld1q_f32(&result[_row][_col]);
-            vst1q_f32(&output[_row * 8 + _col], _vs3);
+            vst1q_f32(&output[_row * 4096 + _col], _vs3);
+            float32x4_t _vl4 = vld1q_f32(&input[_row * 4096 + _col]);
+            vst1q_f32(&x[_row][_col], _vl4);
+            float32x4_t _v5 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr6 = vsqrtq_f32(_v5);
+            vst1q_f32(&result[_row][_col], _vr6);
+            float32x4_t _vs7 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 4096 + _col], _vs7);
         }
         // Scalar cleanup
-        for (; _col < 8; _col++) {
-            x[_row][_col] = input[_row * 8 + _col];
+        for (; _col < 4096; _col++) {
+            x[_row][_col] = input[_row * 4096 + _col];
             result[_row][_col] = sqrtf(x[_row][_col]);
-            output[_row * 8 + _col] = result[_row][_col];
+            output[_row * 4096 + _col] = result[_row][_col];
+            x[_row][_col] = input[_row * 4096 + _col];
+            result[_row][_col] = sqrtf(x[_row][_col]);
+            output[_row * 4096 + _col] = result[_row][_col];
         }
     }
 

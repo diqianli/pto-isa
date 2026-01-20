@@ -11,30 +11,38 @@
 
 namespace cg = cooperative_groups;
 
-__device__ float x[8][8];
-__device__ float exp_x[8][8];
-__device__ float exp_neg_x[8][8];
-__device__ float neg_x[8][8];
-__device__ float numerator[8][8];
-__device__ float denominator[8][8];
-__device__ float result[8][8];
+__device__ float x[1][4096];
+__device__ float exp_x[1][4096];
+__device__ float exp_neg_x[1][4096];
+__device__ float neg_x[1][4096];
+__device__ float numerator[1][4096];
+__device__ float denominator[1][4096];
+__device__ float result[1][4096];
 
 __global__ void aten_tanh_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Loop fusion: 7 loop overheads saved
+    // Loop fusion: 15 loop overheads saved
 
-    // FUSED (8 ops): x=TLOAD(...); exp_x=TEXP(...); neg_x=TNEG(...); exp_neg_x=TEXP(...); numerator=TSUB(...); denominator=TADD(...); result=TDIV(...); output=TSTORE(...)
-    if (_row < 8 && _col < 8) {
-        x[_row][_col] = input[_row * 8 + _col];
+    // FUSED (16 ops): x=TLOAD(...); exp_x=TEXP(...); neg_x=TNEG(...); exp_neg_x=TEXP(...); numerator=TSUB(...); denominator=TADD(...); result=TDIV(...); output=TSTORE(...); x=TLOAD(...); exp_x=TEXP(...); neg_x=TNEG(...); exp_neg_x=TEXP(...); numerator=TSUB(...); denominator=TADD(...); result=TDIV(...); output=TSTORE(...)
+    if (_row < 1 && _col < 4096) {
+        x[_row][_col] = input[_row * 4096 + _col];
         exp_x[_row][_col] = __expf(x[_row][_col]);
         neg_x[_row][_col] = -x[_row][_col];
         exp_neg_x[_row][_col] = __expf(neg_x[_row][_col]);
         numerator[_row][_col] = exp_x[_row][_col] - exp_neg_x[_row][_col];
         denominator[_row][_col] = exp_x[_row][_col] + exp_neg_x[_row][_col];
         result[_row][_col] = numerator[_row][_col] / denominator[_row][_col];
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 4096 + _col] = result[_row][_col];
+        x[_row][_col] = input[_row * 4096 + _col];
+        exp_x[_row][_col] = __expf(x[_row][_col]);
+        neg_x[_row][_col] = -x[_row][_col];
+        exp_neg_x[_row][_col] = __expf(neg_x[_row][_col]);
+        numerator[_row][_col] = exp_x[_row][_col] - exp_neg_x[_row][_col];
+        denominator[_row][_col] = exp_x[_row][_col] + exp_neg_x[_row][_col];
+        result[_row][_col] = numerator[_row][_col] / denominator[_row][_col];
+        output[_row * 4096 + _col] = result[_row][_col];
     }
 
 }

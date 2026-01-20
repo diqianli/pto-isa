@@ -1,11 +1,15 @@
 """
-PTO torch.nn Operators Implementation
+PTO torch.nn Operators Implementation with Dynamic Tiling
 
-This module implements PyTorch torch.nn operators using PTO ISA instructions.
-Each operator is implemented as a function that builds a PTO program,
-which can then be compiled to ARM64 NEON code with loop fusion.
+This module implements PyTorch torch.nn operators using PTO ISA instructions
+with dynamic tensor shape support.
 
 Reference: https://docs.pytorch.org/docs/stable/nn.html
+
+Tile Shape Computation Rules:
+1) col should be multiples of VECTOR_LANES of the given physical ISA
+2) row should be multiple of PHYSICAL_ROW_SIZE
+3) byte size of the TILE should be no greater than 16KB
 
 Categories implemented:
 1. Non-linear Activations: ReLU, Sigmoid, Tanh, Softmax, GELU, SiLU, LeakyReLU, ELU, Hardswish
@@ -23,17 +27,28 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pto_compile import PTOFunctionBuilder, PTOCompiler
-from pto_isa_definition import ElementType, MemorySpace
+from pto_isa_definition import ElementType, MemorySpace, CompareMode
+
+# Import dynamic tiling utilities (from parent directory)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pto_dynamic_tiling import (
+    compute_tile_shape, get_tile_info,
+    build_unary_op, build_binary_op, build_scalar_op,
+    DEFAULT_DTYPE, MAX_TILE_BYTES, ELEMENT_BYTES
+)
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-DEFAULT_TILE_ROWS = 8
-DEFAULT_TILE_COLS = 8
-DEFAULT_DTYPE = ElementType.F32
+DEFAULT_TARGET_ISA = "arm64"
 OUTPUT_DIR = "torch_nn_arm64"
+
+# For backward compatibility - compute default tile shape
+_default_info = get_tile_info(DEFAULT_DTYPE, DEFAULT_TARGET_ISA)
+DEFAULT_TILE_ROWS = _default_info['rows']
+DEFAULT_TILE_COLS = _default_info['cols']
 
 
 # =============================================================================
@@ -910,10 +925,14 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     from pto_compile import generate_all_backends, BACKENDS
+    from pto_dynamic_tiling import print_tile_shapes
     
     print("=" * 70)
-    print("PTO torch.nn Operators - Multi-Backend Code Generation")
+    print("PTO torch.nn Operators - Dynamic Tiling Multi-Backend Code Generation")
     print("=" * 70)
+    
+    # Show tile shapes
+    print_tile_shapes()
     
     # Base output directory
     OUTPUT_PREFIX = "torch_nn"

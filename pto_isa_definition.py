@@ -67,6 +67,10 @@ ARM64_VECTOR_LANES = {
     "u64": 2,
 }
 
+# ARM64 Physical Tile Size
+# Physical_Row_Size: Optimal repeat count for vector pipeline performance
+ARM64_PHYSICAL_ROW_SIZE = 1          # Optimal repeat count for ARM64
+
 # NEON intrinsic suffix mappings
 ARM64_NEON_SUFFIX = {
     "f32": "f32",
@@ -195,6 +199,10 @@ CUDA_INTRINSICS = {
     "max": {"f32": "fmaxf", "f64": "fmax", "f16": "__hmax"},
     "min": {"f32": "fminf", "f64": "fmin", "f16": "__hmin"},
 }
+
+# CUDA Physical Tile Size
+# Physical_Row_Size: Optimal repeat count for vector pipeline performance
+CUDA_PHYSICAL_ROW_SIZE = 1           # Optimal repeat count for CUDA
 
 
 @dataclass
@@ -331,6 +339,10 @@ ASCEND_VECTOR_OPS = {
     "recip": "Reciprocal",
     "relu": "Relu",
 }
+
+# Ascend 910B Physical Tile Size
+# Physical_Row_Size: Optimal repeat count for vector pipeline performance
+ASCEND_PHYSICAL_ROW_SIZE = 32         # Optimal repeat count for Ascend 910B pipeline
 
 
 @dataclass
@@ -3084,6 +3096,21 @@ class TSORT32(TileInstruction):
 
 
 @dataclass
+class TMRGSORT(TileInstruction):
+    """Merge two sorted tiles into one sorted tile (merge sort operation)."""
+    dst: TileOperand      # Merged sorted result
+    src0: TileOperand     # First sorted input
+    src1: TileOperand     # Second sorted input
+    
+    @property
+    def opcode(self) -> str:
+        return "TMRGSORT"
+    
+    def to_pto_as(self) -> str:
+        return f"{self.dst} = tmrgsort {self.src0}, {self.src1} : ({self.src0.tile_type}, {self.src1.tile_type}) -> {self.dst.tile_type}"
+
+
+@dataclass
 class TASSIGN(TileInstruction):
     """Bind a tile to an on-chip address."""
     tile: TileOperand
@@ -3631,6 +3658,7 @@ TILE_INSTRUCTIONS = {
     "TCI": TCI,
     "TPRELU": TPRELU,
     "TSORT32": TSORT32,
+    "TMRGSORT": TMRGSORT,
     "TASSIGN": TASSIGN,
     "TSYNC": TSYNC,
 }

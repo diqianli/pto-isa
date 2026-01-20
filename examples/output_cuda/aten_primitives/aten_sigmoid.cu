@@ -11,26 +11,32 @@
 
 namespace cg = cooperative_groups;
 
-__device__ float x[8][8];
-__device__ float t1[8][8];
-__device__ float t2[8][8];
-__device__ float t3[8][8];
-__device__ float result[8][8];
+__device__ float x[1][4096];
+__device__ float t1[1][4096];
+__device__ float t2[1][4096];
+__device__ float t3[1][4096];
+__device__ float result[1][4096];
 
 __global__ void aten_sigmoid_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Loop fusion: 5 loop overheads saved
+    // Loop fusion: 11 loop overheads saved
 
-    // FUSED (6 ops): x=TLOAD(...); t1=TNEG(...); t2=TEXP(...); t3=TADDS(...); result=TRECIP(...); output=TSTORE(...)
-    if (_row < 8 && _col < 8) {
-        x[_row][_col] = input[_row * 8 + _col];
+    // FUSED (12 ops): x=TLOAD(...); t1=TNEG(...); t2=TEXP(...); t3=TADDS(...); result=TRECIP(...); output=TSTORE(...); x=TLOAD(...); t1=TNEG(...); t2=TEXP(...); t3=TADDS(...); result=TRECIP(...); output=TSTORE(...)
+    if (_row < 1 && _col < 4096) {
+        x[_row][_col] = input[_row * 4096 + _col];
         t1[_row][_col] = -x[_row][_col];
         t2[_row][_col] = __expf(t1[_row][_col]);
         t3[_row][_col] = t2[_row][_col] + 1.0f;
         result[_row][_col] = 1.0f / t3[_row][_col];
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 4096 + _col] = result[_row][_col];
+        x[_row][_col] = input[_row * 4096 + _col];
+        t1[_row][_col] = -x[_row][_col];
+        t2[_row][_col] = __expf(t1[_row][_col]);
+        t3[_row][_col] = t2[_row][_col] + 1.0f;
+        result[_row][_col] = 1.0f / t3[_row][_col];
+        output[_row * 4096 + _col] = result[_row][_col];
     }
 
 }

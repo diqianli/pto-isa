@@ -6,30 +6,40 @@
 #include <stdio.h>
 
 void aten_mul_scalar(float* input, float* output) {
-    float x[8][8];
-    float result[8][8];
+    float x[1][4096];
+    float result[1][4096];
 
-    // Loop fusion: 2 loop overheads saved
+    // Loop fusion: 5 loop overheads saved
 
-    // FUSED LOOP (3 ops): x=TLOAD(input,0,0); result=TMULS(x,0.5f); output=TSTORE(result,0,0)
+    // FUSED LOOP (6 ops): x=TLOAD(input,0,0); result=TMULS(x,0.5f); output=TSTORE(result,0,0); x=TLOAD(input,0,0); result=TMULS(x,0.5f); output=TSTORE(result,0,0)
     float32x4_t _vs0 = vdupq_n_f32(0.5f);
-    for (int _row = 0; _row < 8; _row++) {
+    for (int _row = 0; _row < 1; _row++) {
         int _col;
         // Vectorized loop
-        for (_col = 0; _col + 4 <= 8; _col += 4) {
-            float32x4_t _vl1 = vld1q_f32(&input[_row * 8 + _col]);
+        for (_col = 0; _col + 4 <= 4096; _col += 4) {
+            float32x4_t _vl1 = vld1q_f32(&input[_row * 4096 + _col]);
             vst1q_f32(&x[_row][_col], _vl1);
             float32x4_t _v2 = vld1q_f32(&x[_row][_col]);
             float32x4_t _vr3 = vmulq_f32(_v2, _vs0);
             vst1q_f32(&result[_row][_col], _vr3);
             float32x4_t _vs4 = vld1q_f32(&result[_row][_col]);
-            vst1q_f32(&output[_row * 8 + _col], _vs4);
+            vst1q_f32(&output[_row * 4096 + _col], _vs4);
+            float32x4_t _vl5 = vld1q_f32(&input[_row * 4096 + _col]);
+            vst1q_f32(&x[_row][_col], _vl5);
+            float32x4_t _v6 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr7 = vmulq_f32(_v6, _vs0);
+            vst1q_f32(&result[_row][_col], _vr7);
+            float32x4_t _vs8 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 4096 + _col], _vs8);
         }
         // Scalar cleanup
-        for (; _col < 8; _col++) {
-            x[_row][_col] = input[_row * 8 + _col];
+        for (; _col < 4096; _col++) {
+            x[_row][_col] = input[_row * 4096 + _col];
             result[_row][_col] = x[_row][_col] * 0.5f;
-            output[_row * 8 + _col] = result[_row][_col];
+            output[_row * 4096 + _col] = result[_row][_col];
+            x[_row][_col] = input[_row * 4096 + _col];
+            result[_row][_col] = x[_row][_col] * 0.5f;
+            output[_row * 4096 + _col] = result[_row][_col];
         }
     }
 

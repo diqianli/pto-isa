@@ -11,26 +11,39 @@
 
 namespace cg = cooperative_groups;
 
-__device__ float x[8][8];
-__device__ float sum_result[8][1];
-__device__ float result[8][1];
+__device__ float x[1][4096];
+__device__ float sum_result[1][1];
+__device__ float result[1][1];
 
 __global__ void aten_mean_row_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Loop fusion: 1 loop overheads saved
+    // Loop fusion: 2 loop overheads saved
 
     // FUSED (1 ops): x=TLOAD(...)
-    if (_row < 8 && _col < 8) {
-        x[_row][_col] = input[_row * 8 + _col];
+    if (_row < 1 && _col < 4096) {
+        x[_row][_col] = input[_row * 4096 + _col];
     }
 
     // BARRIER: TROWSUM
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
-    if (_row < 8 && _col < 1) {
-        result[_row][_col] = sum_result[_row][_col] / 8.0f;
+    if (_row < 1 && _col < 1) {
+        result[_row][_col] = sum_result[_row][_col] / 4096.0f;
+        output[_row * 1 + _col] = result[_row][_col];
+    }
+
+    // FUSED (1 ops): x=TLOAD(...)
+    if (_row < 1 && _col < 4096) {
+        x[_row][_col] = input[_row * 4096 + _col];
+    }
+
+    // BARRIER: TROWSUM
+
+    // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
+    if (_row < 1 && _col < 1) {
+        result[_row][_col] = sum_result[_row][_col] / 4096.0f;
         output[_row * 1 + _col] = result[_row][_col];
     }
 

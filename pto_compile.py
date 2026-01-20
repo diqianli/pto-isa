@@ -44,8 +44,10 @@ from pto_isa_definition import (
     # Broadcast operations
     TEXPANDS, TROWEXPAND, TCOLEXPAND,
     TROWEXPANDSUB, TROWEXPANDDIV, TROWEXPANDMUL,
-    # Scalar operations
+    # Tile-scalar operations
     TADDS, TMULS, TDIVS,
+    # Scalar instructions
+    SADD, SSUB, SMUL, SDIV, SMOV, SLI, SCMP,
     
     # Helper functions
     tile, scalar, index, memref, imm,
@@ -248,23 +250,43 @@ class PTOFunctionBuilder:
         return self
     
     # Tile memory operations
-    def load(self, dst: str, src_mem: str, row: int = 0, col: int = 0) -> "PTOFunctionBuilder":
-        """Load data from memory into a tile."""
+    def load(self, dst: str, src_mem: str, 
+             row: Union[int, str] = 0, col: Union[int, str] = 0) -> "PTOFunctionBuilder":
+        """Load data from memory into a tile.
+        
+        Args:
+            dst: Destination tile name
+            src_mem: Source memory reference name
+            row: Row offset (int for immediate, str for index variable)
+            col: Col offset (int for immediate, str for index variable)
+        """
+        row_op = ImmediateOperand(row) if isinstance(row, int) else IndexOperand(row)
+        col_op = ImmediateOperand(col) if isinstance(col, int) else IndexOperand(col)
         self._add_instr(TLOAD(
             dst=self._get_tile(dst),
             src_mem=self._get_memref(src_mem),
-            row_offset=ImmediateOperand(row),
-            col_offset=ImmediateOperand(col)
+            row_offset=row_op,
+            col_offset=col_op
         ))
         return self
     
-    def store(self, src: str, dst_mem: str, row: int = 0, col: int = 0) -> "PTOFunctionBuilder":
-        """Store data from a tile into memory."""
+    def store(self, src: str, dst_mem: str, 
+              row: Union[int, str] = 0, col: Union[int, str] = 0) -> "PTOFunctionBuilder":
+        """Store data from a tile into memory.
+        
+        Args:
+            src: Source tile name
+            dst_mem: Destination memory reference name
+            row: Row offset (int for immediate, str for index variable)
+            col: Col offset (int for immediate, str for index variable)
+        """
+        row_op = ImmediateOperand(row) if isinstance(row, int) else IndexOperand(row)
+        col_op = ImmediateOperand(col) if isinstance(col, int) else IndexOperand(col)
         self._add_instr(TSTORE(
             src=self._get_tile(src),
             dst_mem=self._get_memref(dst_mem),
-            row_offset=ImmediateOperand(row),
-            col_offset=ImmediateOperand(col)
+            row_offset=row_op,
+            col_offset=col_op
         ))
         return self
     
@@ -514,16 +536,29 @@ class PTOFunctionBuilder:
         return self
     
     # Loop constructs
-    def for_loop(self, iv_name: str, lb: int, ub: int, step: int = 1) -> "PTOFunctionBuilder":
-        """Begin a FOR loop."""
+    def for_loop(self, iv_name: str, 
+                 lb: Union[int, str], ub: Union[int, str], 
+                 step: Union[int, str] = 1) -> "PTOFunctionBuilder":
+        """Begin a FOR loop.
+        
+        Args:
+            iv_name: Induction variable name
+            lb: Lower bound (int for immediate, str for scalar variable)
+            ub: Upper bound (int for immediate, str for scalar variable)
+            step: Step (int for immediate, str for scalar variable)
+        """
         self.symbol_table.push_scope()
         self.symbol_table.define(iv_name, Symbol(iv_name, "index", ElementType.INDEX))
         
+        lb_op = ImmediateOperand(lb) if isinstance(lb, int) else IndexOperand(lb)
+        ub_op = ImmediateOperand(ub) if isinstance(ub, int) else IndexOperand(ub)
+        step_op = ImmediateOperand(step) if isinstance(step, int) else IndexOperand(step)
+        
         self._add_instr(FOR(
             iv=IndexOperand(iv_name),
-            lb=ImmediateOperand(lb),
-            ub=ImmediateOperand(ub),
-            step=ImmediateOperand(step)
+            lb=lb_op,
+            ub=ub_op,
+            step=step_op
         ))
         self._loop_stack.append([])
         return self
@@ -593,6 +628,116 @@ class PTOFunctionBuilder:
         """End a 2-level nested loop."""
         self.end_for()  # End inner
         self.end_for()  # End outer
+        return self
+    
+    # =========================================================================
+    # Scalar Operations
+    # =========================================================================
+    
+    def scalar_li(self, dst: str, value: Union[int, float]) -> "PTOFunctionBuilder":
+        """Load immediate value into scalar."""
+        if dst not in self.program.scalar_declarations:
+            raise ValidationError(f"Scalar '{dst}' not declared")
+        self._add_instr(SLI(
+            dst=self._get_scalar(dst),
+            imm=ImmediateOperand(value)
+        ))
+        return self
+    
+    def scalar_add(self, dst: str, src0: str, 
+                   src1: Union[str, int, float]) -> "PTOFunctionBuilder":
+        """Add two scalars or scalar + immediate."""
+        if isinstance(src1, str):
+            src1_op = self._get_scalar(src1)
+        else:
+            src1_op = ImmediateOperand(src1)
+        self._add_instr(SADD(
+            dst=self._get_scalar(dst),
+            src0=self._get_scalar(src0),
+            src1=src1_op
+        ))
+        return self
+    
+    def scalar_sub(self, dst: str, src0: str, 
+                   src1: Union[str, int, float]) -> "PTOFunctionBuilder":
+        """Subtract two scalars or scalar - immediate."""
+        if isinstance(src1, str):
+            src1_op = self._get_scalar(src1)
+        else:
+            src1_op = ImmediateOperand(src1)
+        self._add_instr(SSUB(
+            dst=self._get_scalar(dst),
+            src0=self._get_scalar(src0),
+            src1=src1_op
+        ))
+        return self
+    
+    def scalar_mul(self, dst: str, src0: str, src1: str) -> "PTOFunctionBuilder":
+        """Multiply two scalars."""
+        self._add_instr(SMUL(
+            dst=self._get_scalar(dst),
+            src0=self._get_scalar(src0),
+            src1=self._get_scalar(src1)
+        ))
+        return self
+    
+    def scalar_cmp(self, dst: str, src0: str, src1: str, 
+                   mode: CompareMode) -> "PTOFunctionBuilder":
+        """Compare two scalars."""
+        self._add_instr(SCMP(
+            dst=self._get_scalar(dst),
+            src0=self._get_scalar(src0),
+            src1=self._get_scalar(src1),
+            cmp_mode=mode
+        ))
+        return self
+    
+    # =========================================================================
+    # Control Flow - IF/ELSE/ENDIF
+    # =========================================================================
+    
+    def if_then(self, cond: str) -> "PTOFunctionBuilder":
+        """Begin an IF block."""
+        self.symbol_table.push_scope()
+        self._add_instr(IF(cond=self._get_scalar(cond)))
+        self._loop_stack.append([])  # Reuse loop stack for IF body
+        return self
+    
+    def else_block(self) -> "PTOFunctionBuilder":
+        """Begin ELSE block."""
+        if not self._loop_stack:
+            raise ValidationError("ELSE without matching IF")
+        
+        # Close IF body, emit to parent
+        if_body = self._loop_stack.pop()
+        if self._loop_stack:
+            for instr in if_body:
+                self._loop_stack[-1].append(instr)
+            self._loop_stack[-1].append(ELSE())
+        else:
+            for instr in if_body:
+                self.program.add_instruction(instr)
+            self.program.add_instruction(ELSE())
+        
+        self._loop_stack.append([])  # Start ELSE body
+        return self
+    
+    def endif(self) -> "PTOFunctionBuilder":
+        """End IF/ELSE block."""
+        if not self._loop_stack:
+            raise ValidationError("ENDIF without matching IF")
+        
+        body = self._loop_stack.pop()
+        if self._loop_stack:
+            for instr in body:
+                self._loop_stack[-1].append(instr)
+            self._loop_stack[-1].append(ENDIF())
+        else:
+            for instr in body:
+                self.program.add_instruction(instr)
+            self.program.add_instruction(ENDIF())
+        
+        self.symbol_table.pop_scope()
         return self
     
     # Build the program

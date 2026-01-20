@@ -11,26 +11,32 @@
 
 namespace cg = cooperative_groups;
 
-__device__ float base[8][8];
-__device__ float exp[8][8];
-__device__ float log_base[8][8];
-__device__ float product[8][8];
-__device__ float result[8][8];
+__device__ float base[1][4096];
+__device__ float exp_tile[1][4096];
+__device__ float log_base[1][4096];
+__device__ float product[1][4096];
+__device__ float result[1][4096];
 
 __global__ void prims_pow_kernel(float* input_base, float* input_exp, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Loop fusion: 5 loop overheads saved
+    // Loop fusion: 11 loop overheads saved
 
-    // FUSED (6 ops): base=TLOAD(...); exp=TLOAD(...); log_base=TLOG(...); product=TMUL(...); result=TEXP(...); output=TSTORE(...)
-    if (_row < 8 && _col < 8) {
-        base[_row][_col] = input_base[_row * 8 + _col];
-        exp[_row][_col] = input_exp[_row * 8 + _col];
+    // FUSED (12 ops): base=TLOAD(...); exp_tile=TLOAD(...); log_base=TLOG(...); product=TMUL(...); result=TEXP(...); output=TSTORE(...); base=TLOAD(...); exp_tile=TLOAD(...); log_base=TLOG(...); product=TMUL(...); result=TEXP(...); output=TSTORE(...)
+    if (_row < 1 && _col < 4096) {
+        base[_row][_col] = input_base[_row * 4096 + _col];
+        exp_tile[_row][_col] = input_exp[_row * 4096 + _col];
         log_base[_row][_col] = __logf(base[_row][_col]);
-        product[_row][_col] = exp[_row][_col] * log_base[_row][_col];
+        product[_row][_col] = exp_tile[_row][_col] * log_base[_row][_col];
         result[_row][_col] = __expf(product[_row][_col]);
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 4096 + _col] = result[_row][_col];
+        base[_row][_col] = input_base[_row * 4096 + _col];
+        exp_tile[_row][_col] = input_exp[_row * 4096 + _col];
+        log_base[_row][_col] = __logf(base[_row][_col]);
+        product[_row][_col] = exp_tile[_row][_col] * log_base[_row][_col];
+        result[_row][_col] = __expf(product[_row][_col]);
+        output[_row * 4096 + _col] = result[_row][_col];
     }
 
 }

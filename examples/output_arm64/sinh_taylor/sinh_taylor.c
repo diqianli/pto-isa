@@ -6,14 +6,14 @@
 #include <stdio.h>
 
 void sinh_taylor(float* input, float* output) {
-    float x[8][8];
-    float x_squared[8][8];
-    float term[8][8];
-    float result[8][8];
+    float x[32][128];
+    float x_squared[32][128];
+    float term[32][128];
+    float result[32][128];
 
-    // Loop fusion: 22 loop overheads saved
+    // Loop fusion: 45 loop overheads saved
 
-    // FUSED LOOP (23 ops): x=TLOAD(input,0,0); result=TMULS(x,1.0f); x_squared=TMUL(x,x); term=TMULS(x,1.0f); term=TMUL(term,x_squared); term=TDIVS(term,6.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,20.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,42.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,72.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,110.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,156.0f); result=TADD(result,term); output=TSTORE(result,0,0)
+    // FUSED LOOP (46 ops): x=TLOAD(input,0,0); result=TMULS(x,1.0f); x_squared=TMUL(x,x); term=TMULS(x,1.0f); term=TMUL(term,x_squared); term=TDIVS(term,6.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,20.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,42.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,72.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,110.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,156.0f); result=TADD(result,term); output=TSTORE(result,0,0); x=TLOAD(input,0,0); result=TMULS(x,1.0f); x_squared=TMUL(x,x); term=TMULS(x,1.0f); term=TMUL(term,x_squared); term=TDIVS(term,6.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,20.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,42.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,72.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,110.0f); result=TADD(result,term); term=TMUL(term,x_squared); term=TDIVS(term,156.0f); result=TADD(result,term); output=TSTORE(result,0,0)
     float32x4_t _vs0 = vdupq_n_f32(1.0f);
     float32x4_t _vs1 = vdupq_n_f32(6.0f);
     float32x4_t _vs2 = vdupq_n_f32(20.0f);
@@ -21,11 +21,11 @@ void sinh_taylor(float* input, float* output) {
     float32x4_t _vs4 = vdupq_n_f32(72.0f);
     float32x4_t _vs5 = vdupq_n_f32(110.0f);
     float32x4_t _vs6 = vdupq_n_f32(156.0f);
-    for (int _row = 0; _row < 8; _row++) {
+    for (int _row = 0; _row < 32; _row++) {
         int _col;
         // Vectorized loop
-        for (_col = 0; _col + 4 <= 8; _col += 4) {
-            float32x4_t _vl7 = vld1q_f32(&input[_row * 8 + _col]);
+        for (_col = 0; _col + 4 <= 128; _col += 4) {
+            float32x4_t _vl7 = vld1q_f32(&input[_row * 128 + _col]);
             vst1q_f32(&x[_row][_col], _vl7);
             float32x4_t _v8 = vld1q_f32(&x[_row][_col]);
             float32x4_t _vr9 = vmulq_f32(_v8, _vs0);
@@ -104,11 +104,91 @@ void sinh_taylor(float* input, float* output) {
             float32x4_t _vr62 = vaddq_f32(_v60, _v61);
             vst1q_f32(&result[_row][_col], _vr62);
             float32x4_t _vs63 = vld1q_f32(&result[_row][_col]);
-            vst1q_f32(&output[_row * 8 + _col], _vs63);
+            vst1q_f32(&output[_row * 128 + _col], _vs63);
+            float32x4_t _vl64 = vld1q_f32(&input[_row * 128 + _col]);
+            vst1q_f32(&x[_row][_col], _vl64);
+            float32x4_t _v65 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr66 = vmulq_f32(_v65, _vs0);
+            vst1q_f32(&result[_row][_col], _vr66);
+            float32x4_t _v67 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _v68 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr69 = vmulq_f32(_v67, _v68);
+            vst1q_f32(&x_squared[_row][_col], _vr69);
+            float32x4_t _v70 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr71 = vmulq_f32(_v70, _vs0);
+            vst1q_f32(&term[_row][_col], _vr71);
+            float32x4_t _v72 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _v73 = vld1q_f32(&x_squared[_row][_col]);
+            float32x4_t _vr74 = vmulq_f32(_v72, _v73);
+            vst1q_f32(&term[_row][_col], _vr74);
+            float32x4_t _v75 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr76 = vdivq_f32(_v75, _vs1);
+            vst1q_f32(&term[_row][_col], _vr76);
+            float32x4_t _v77 = vld1q_f32(&result[_row][_col]);
+            float32x4_t _v78 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr79 = vaddq_f32(_v77, _v78);
+            vst1q_f32(&result[_row][_col], _vr79);
+            float32x4_t _v80 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _v81 = vld1q_f32(&x_squared[_row][_col]);
+            float32x4_t _vr82 = vmulq_f32(_v80, _v81);
+            vst1q_f32(&term[_row][_col], _vr82);
+            float32x4_t _v83 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr84 = vdivq_f32(_v83, _vs2);
+            vst1q_f32(&term[_row][_col], _vr84);
+            float32x4_t _v85 = vld1q_f32(&result[_row][_col]);
+            float32x4_t _v86 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr87 = vaddq_f32(_v85, _v86);
+            vst1q_f32(&result[_row][_col], _vr87);
+            float32x4_t _v88 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _v89 = vld1q_f32(&x_squared[_row][_col]);
+            float32x4_t _vr90 = vmulq_f32(_v88, _v89);
+            vst1q_f32(&term[_row][_col], _vr90);
+            float32x4_t _v91 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr92 = vdivq_f32(_v91, _vs3);
+            vst1q_f32(&term[_row][_col], _vr92);
+            float32x4_t _v93 = vld1q_f32(&result[_row][_col]);
+            float32x4_t _v94 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr95 = vaddq_f32(_v93, _v94);
+            vst1q_f32(&result[_row][_col], _vr95);
+            float32x4_t _v96 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _v97 = vld1q_f32(&x_squared[_row][_col]);
+            float32x4_t _vr98 = vmulq_f32(_v96, _v97);
+            vst1q_f32(&term[_row][_col], _vr98);
+            float32x4_t _v99 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr100 = vdivq_f32(_v99, _vs4);
+            vst1q_f32(&term[_row][_col], _vr100);
+            float32x4_t _v101 = vld1q_f32(&result[_row][_col]);
+            float32x4_t _v102 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr103 = vaddq_f32(_v101, _v102);
+            vst1q_f32(&result[_row][_col], _vr103);
+            float32x4_t _v104 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _v105 = vld1q_f32(&x_squared[_row][_col]);
+            float32x4_t _vr106 = vmulq_f32(_v104, _v105);
+            vst1q_f32(&term[_row][_col], _vr106);
+            float32x4_t _v107 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr108 = vdivq_f32(_v107, _vs5);
+            vst1q_f32(&term[_row][_col], _vr108);
+            float32x4_t _v109 = vld1q_f32(&result[_row][_col]);
+            float32x4_t _v110 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr111 = vaddq_f32(_v109, _v110);
+            vst1q_f32(&result[_row][_col], _vr111);
+            float32x4_t _v112 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _v113 = vld1q_f32(&x_squared[_row][_col]);
+            float32x4_t _vr114 = vmulq_f32(_v112, _v113);
+            vst1q_f32(&term[_row][_col], _vr114);
+            float32x4_t _v115 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr116 = vdivq_f32(_v115, _vs6);
+            vst1q_f32(&term[_row][_col], _vr116);
+            float32x4_t _v117 = vld1q_f32(&result[_row][_col]);
+            float32x4_t _v118 = vld1q_f32(&term[_row][_col]);
+            float32x4_t _vr119 = vaddq_f32(_v117, _v118);
+            vst1q_f32(&result[_row][_col], _vr119);
+            float32x4_t _vs120 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 128 + _col], _vs120);
         }
         // Scalar cleanup
-        for (; _col < 8; _col++) {
-            x[_row][_col] = input[_row * 8 + _col];
+        for (; _col < 128; _col++) {
+            x[_row][_col] = input[_row * 128 + _col];
             result[_row][_col] = x[_row][_col] * 1.0f;
             x_squared[_row][_col] = x[_row][_col] * x[_row][_col];
             term[_row][_col] = x[_row][_col] * 1.0f;
@@ -130,7 +210,30 @@ void sinh_taylor(float* input, float* output) {
             term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
             term[_row][_col] = term[_row][_col] / 156.0f;
             result[_row][_col] = result[_row][_col] + term[_row][_col];
-            output[_row * 8 + _col] = result[_row][_col];
+            output[_row * 128 + _col] = result[_row][_col];
+            x[_row][_col] = input[_row * 128 + _col];
+            result[_row][_col] = x[_row][_col] * 1.0f;
+            x_squared[_row][_col] = x[_row][_col] * x[_row][_col];
+            term[_row][_col] = x[_row][_col] * 1.0f;
+            term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+            term[_row][_col] = term[_row][_col] / 6.0f;
+            result[_row][_col] = result[_row][_col] + term[_row][_col];
+            term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+            term[_row][_col] = term[_row][_col] / 20.0f;
+            result[_row][_col] = result[_row][_col] + term[_row][_col];
+            term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+            term[_row][_col] = term[_row][_col] / 42.0f;
+            result[_row][_col] = result[_row][_col] + term[_row][_col];
+            term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+            term[_row][_col] = term[_row][_col] / 72.0f;
+            result[_row][_col] = result[_row][_col] + term[_row][_col];
+            term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+            term[_row][_col] = term[_row][_col] / 110.0f;
+            result[_row][_col] = result[_row][_col] + term[_row][_col];
+            term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+            term[_row][_col] = term[_row][_col] / 156.0f;
+            result[_row][_col] = result[_row][_col] + term[_row][_col];
+            output[_row * 128 + _col] = result[_row][_col];
         }
     }
 

@@ -1,7 +1,9 @@
 """
-PTO torch.nn.attention.flex_attention Implementation
+PTO torch.nn.attention.flex_attention Implementation with Dynamic Tiling
 
-This module implements PyTorch FlexAttention APIs using PTO ISA instructions.
+This module implements PyTorch FlexAttention APIs using PTO ISA instructions
+with dynamic tensor shape support.
+
 Reference: 
 - https://docs.pytorch.org/docs/stable/nn.attention.flex_attention.html
 - https://pytorch.org/blog/flexattention/
@@ -15,6 +17,11 @@ Core Attention Formula:
     Score = Score + mask           # Apply mask (additive)
     Attention = softmax(Score)
     Output = Attention @ V
+
+Tile Shape Computation Rules:
+1) col should be multiples of VECTOR_LANES of the given physical ISA
+2) row should be multiple of PHYSICAL_ROW_SIZE
+3) byte size of the TILE should be no greater than 16KB
 
 Categories implemented:
 1. Basic Attention: scaled_dot_product_attention
@@ -31,17 +38,28 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pto_compile import PTOFunctionBuilder, PTOCompiler
-from pto_isa_definition import ElementType, MemorySpace
+from pto_isa_definition import ElementType, MemorySpace, CompareMode
+
+# Import dynamic tiling utilities (from parent directory)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pto_dynamic_tiling import (
+    compute_tile_shape, get_tile_info,
+    build_unary_op, build_binary_op, build_scalar_op,
+    DEFAULT_DTYPE, MAX_TILE_BYTES, ELEMENT_BYTES
+)
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-DEFAULT_TILE_ROWS = 8
-DEFAULT_TILE_COLS = 8
-DEFAULT_DTYPE = ElementType.F32
+DEFAULT_TARGET_ISA = "arm64"
 DEFAULT_HEAD_DIM = 64  # Common head dimension for attention
+
+# For backward compatibility - compute default tile shape
+_default_info = get_tile_info(DEFAULT_DTYPE, DEFAULT_TARGET_ISA)
+DEFAULT_TILE_ROWS = _default_info['rows']
+DEFAULT_TILE_COLS = _default_info['cols']
 
 
 # =============================================================================
@@ -1001,14 +1019,19 @@ def get_all_programs():
 
 if __name__ == "__main__":
     from pto_compile import generate_all_backends, BACKENDS
+    from pto_dynamic_tiling import print_tile_shapes
     
     print("=" * 70)
-    print("PTO FlexAttention - Multi-Backend Code Generation")
+    print("PTO FlexAttention - Dynamic Tiling Multi-Backend Code Generation")
     print("=" * 70)
     print()
     print("Reference:")
     print("  - https://docs.pytorch.org/docs/stable/nn.attention.flex_attention.html")
     print("  - https://pytorch.org/blog/flexattention/")
+    print()
+    
+    # Show tile shapes
+    print_tile_shapes()
     print()
     
     OUTPUT_PREFIX = "flex_attention"

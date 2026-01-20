@@ -6,22 +6,22 @@
 #include <stdio.h>
 
 void aten_silu(float* input, float* output) {
-    float x[8][8];
-    float neg_x[8][8];
-    float exp_neg[8][8];
-    float one_plus[8][8];
-    float sigmoid_out[8][8];
-    float result[8][8];
+    float x[1][4096];
+    float neg_x[1][4096];
+    float exp_neg[1][4096];
+    float one_plus[1][4096];
+    float sigmoid_out[1][4096];
+    float result[1][4096];
 
-    // Loop fusion: 6 loop overheads saved
+    // Loop fusion: 13 loop overheads saved
 
-    // FUSED LOOP (7 ops): x=TLOAD(input,0,0); neg_x=TNEG(x); exp_neg=TEXP(neg_x); one_plus=TADDS(exp_neg,1.0f); sigmoid_out=TRECIP(one_plus); result=TMUL(x,sigmoid_out); output=TSTORE(result,0,0)
+    // FUSED LOOP (14 ops): x=TLOAD(input,0,0); neg_x=TNEG(x); exp_neg=TEXP(neg_x); one_plus=TADDS(exp_neg,1.0f); sigmoid_out=TRECIP(one_plus); result=TMUL(x,sigmoid_out); output=TSTORE(result,0,0); x=TLOAD(input,0,0); neg_x=TNEG(x); exp_neg=TEXP(neg_x); one_plus=TADDS(exp_neg,1.0f); sigmoid_out=TRECIP(one_plus); result=TMUL(x,sigmoid_out); output=TSTORE(result,0,0)
     float32x4_t _vs0 = vdupq_n_f32(1.0f);
-    for (int _row = 0; _row < 8; _row++) {
+    for (int _row = 0; _row < 1; _row++) {
         int _col;
         // Vectorized loop
-        for (_col = 0; _col + 4 <= 8; _col += 4) {
-            float32x4_t _vl1 = vld1q_f32(&input[_row * 8 + _col]);
+        for (_col = 0; _col + 4 <= 4096; _col += 4) {
+            float32x4_t _vl1 = vld1q_f32(&input[_row * 4096 + _col]);
             vst1q_f32(&x[_row][_col], _vl1);
             float32x4_t _v2 = vld1q_f32(&x[_row][_col]);
             float32x4_t _vr3 = vnegq_f32(_v2);
@@ -40,17 +40,44 @@ void aten_silu(float* input, float* output) {
             float32x4_t _vr12 = vmulq_f32(_v10, _v11);
             vst1q_f32(&result[_row][_col], _vr12);
             float32x4_t _vs13 = vld1q_f32(&result[_row][_col]);
-            vst1q_f32(&output[_row * 8 + _col], _vs13);
+            vst1q_f32(&output[_row * 4096 + _col], _vs13);
+            float32x4_t _vl14 = vld1q_f32(&input[_row * 4096 + _col]);
+            vst1q_f32(&x[_row][_col], _vl14);
+            float32x4_t _v15 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _vr16 = vnegq_f32(_v15);
+            vst1q_f32(&neg_x[_row][_col], _vr16);
+            float32x4_t _v17 = vld1q_f32(&neg_x[_row][_col]);
+            float32x4_t _vr18 = _v17;
+            vst1q_f32(&exp_neg[_row][_col], _vr18);
+            float32x4_t _v19 = vld1q_f32(&exp_neg[_row][_col]);
+            float32x4_t _vr20 = vaddq_f32(_v19, _vs0);
+            vst1q_f32(&one_plus[_row][_col], _vr20);
+            float32x4_t _v21 = vld1q_f32(&one_plus[_row][_col]);
+            float32x4_t _vr22 = _v21;
+            vst1q_f32(&sigmoid_out[_row][_col], _vr22);
+            float32x4_t _v23 = vld1q_f32(&x[_row][_col]);
+            float32x4_t _v24 = vld1q_f32(&sigmoid_out[_row][_col]);
+            float32x4_t _vr25 = vmulq_f32(_v23, _v24);
+            vst1q_f32(&result[_row][_col], _vr25);
+            float32x4_t _vs26 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 4096 + _col], _vs26);
         }
         // Scalar cleanup
-        for (; _col < 8; _col++) {
-            x[_row][_col] = input[_row * 8 + _col];
+        for (; _col < 4096; _col++) {
+            x[_row][_col] = input[_row * 4096 + _col];
             neg_x[_row][_col] = -x[_row][_col];
             exp_neg[_row][_col] = expf(neg_x[_row][_col]);
             one_plus[_row][_col] = exp_neg[_row][_col] + 1.0f;
             sigmoid_out[_row][_col] = 1.0f / one_plus[_row][_col];
             result[_row][_col] = x[_row][_col] * sigmoid_out[_row][_col];
-            output[_row * 8 + _col] = result[_row][_col];
+            output[_row * 4096 + _col] = result[_row][_col];
+            x[_row][_col] = input[_row * 4096 + _col];
+            neg_x[_row][_col] = -x[_row][_col];
+            exp_neg[_row][_col] = expf(neg_x[_row][_col]);
+            one_plus[_row][_col] = exp_neg[_row][_col] + 1.0f;
+            sigmoid_out[_row][_col] = 1.0f / one_plus[_row][_col];
+            result[_row][_col] = x[_row][_col] * sigmoid_out[_row][_col];
+            output[_row * 4096 + _col] = result[_row][_col];
         }
     }
 

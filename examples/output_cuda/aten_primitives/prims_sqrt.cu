@@ -11,20 +11,23 @@
 
 namespace cg = cooperative_groups;
 
-__device__ float x[8][8];
-__device__ float result[8][8];
+__device__ float x[1][4096];
+__device__ float result[1][4096];
 
 __global__ void prims_sqrt_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Loop fusion: 2 loop overheads saved
+    // Loop fusion: 5 loop overheads saved
 
-    // FUSED (3 ops): x=TLOAD(...); result=TSQRT(...); output=TSTORE(...)
-    if (_row < 8 && _col < 8) {
-        x[_row][_col] = input[_row * 8 + _col];
+    // FUSED (6 ops): x=TLOAD(...); result=TSQRT(...); output=TSTORE(...); x=TLOAD(...); result=TSQRT(...); output=TSTORE(...)
+    if (_row < 1 && _col < 4096) {
+        x[_row][_col] = input[_row * 4096 + _col];
         result[_row][_col] = __fsqrt_rn(x[_row][_col]);
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 4096 + _col] = result[_row][_col];
+        x[_row][_col] = input[_row * 4096 + _col];
+        result[_row][_col] = __fsqrt_rn(x[_row][_col]);
+        output[_row * 4096 + _col] = result[_row][_col];
     }
 
 }

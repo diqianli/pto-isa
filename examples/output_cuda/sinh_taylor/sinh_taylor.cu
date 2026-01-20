@@ -11,20 +11,20 @@
 
 namespace cg = cooperative_groups;
 
-__device__ float x[8][8];
-__device__ float x_squared[8][8];
-__device__ float term[8][8];
-__device__ float result[8][8];
+__device__ float x[32][128];
+__device__ float x_squared[32][128];
+__device__ float term[32][128];
+__device__ float result[32][128];
 
 __global__ void sinh_taylor_kernel(float* input, float* output) {
     int _row = threadIdx.y + blockIdx.y * blockDim.y;
     int _col = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Loop fusion: 22 loop overheads saved
+    // Loop fusion: 45 loop overheads saved
 
-    // FUSED (23 ops): x=TLOAD(...); result=TMULS(...); x_squared=TMUL(...); term=TMULS(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); output=TSTORE(...)
-    if (_row < 8 && _col < 8) {
-        x[_row][_col] = input[_row * 8 + _col];
+    // FUSED (46 ops): x=TLOAD(...); result=TMULS(...); x_squared=TMUL(...); term=TMULS(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); output=TSTORE(...); x=TLOAD(...); result=TMULS(...); x_squared=TMUL(...); term=TMULS(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); term=TMUL(...); term=TDIVS(...); result=TADD(...); output=TSTORE(...)
+    if (_row < 32 && _col < 128) {
+        x[_row][_col] = input[_row * 128 + _col];
         result[_row][_col] = x[_row][_col] * 1.0f;
         x_squared[_row][_col] = x[_row][_col] * x[_row][_col];
         term[_row][_col] = x[_row][_col] * 1.0f;
@@ -46,7 +46,30 @@ __global__ void sinh_taylor_kernel(float* input, float* output) {
         term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
         term[_row][_col] = term[_row][_col] / 156.0f;
         result[_row][_col] = result[_row][_col] + term[_row][_col];
-        output[_row * 8 + _col] = result[_row][_col];
+        output[_row * 128 + _col] = result[_row][_col];
+        x[_row][_col] = input[_row * 128 + _col];
+        result[_row][_col] = x[_row][_col] * 1.0f;
+        x_squared[_row][_col] = x[_row][_col] * x[_row][_col];
+        term[_row][_col] = x[_row][_col] * 1.0f;
+        term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+        term[_row][_col] = term[_row][_col] / 6.0f;
+        result[_row][_col] = result[_row][_col] + term[_row][_col];
+        term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+        term[_row][_col] = term[_row][_col] / 20.0f;
+        result[_row][_col] = result[_row][_col] + term[_row][_col];
+        term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+        term[_row][_col] = term[_row][_col] / 42.0f;
+        result[_row][_col] = result[_row][_col] + term[_row][_col];
+        term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+        term[_row][_col] = term[_row][_col] / 72.0f;
+        result[_row][_col] = result[_row][_col] + term[_row][_col];
+        term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+        term[_row][_col] = term[_row][_col] / 110.0f;
+        result[_row][_col] = result[_row][_col] + term[_row][_col];
+        term[_row][_col] = term[_row][_col] * x_squared[_row][_col];
+        term[_row][_col] = term[_row][_col] / 156.0f;
+        result[_row][_col] = result[_row][_col] + term[_row][_col];
+        output[_row * 128 + _col] = result[_row][_col];
     }
 
 }

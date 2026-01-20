@@ -30,13 +30,19 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 5 loop overheads saved
+        // Loop fusion: 11 loop overheads saved
 
-        // FUSED (6 ops): TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE
+        // FUSED (12 ops): TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE; TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE
         // TLOAD: Operation
         // TLOAD: Operation
         Ln(log_base, base, 64);
-        Mul(product, exp, log_base, 64);
+        Mul(product, exp_tile, log_base, 64);
+        Exp(result, product, 64);
+        // TSTORE: Operation
+        // TLOAD: Operation
+        // TLOAD: Operation
+        Ln(log_base, base, 64);
+        Mul(product, exp_tile, log_base, 64);
         Exp(result, product, 64);
         // TSTORE: Operation
 

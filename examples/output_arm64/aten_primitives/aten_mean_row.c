@@ -6,37 +6,37 @@
 #include <stdio.h>
 
 void aten_mean_row(float* input, float* output) {
-    float x[8][8];
-    float sum_result[8][1];
-    float result[8][1];
+    float x[1][4096];
+    float sum_result[1][1];
+    float result[1][1];
 
-    // Loop fusion: 1 loop overheads saved
+    // Loop fusion: 2 loop overheads saved
 
     // FUSED LOOP (1 ops): x=TLOAD(input,0,0)
-    for (int _row = 0; _row < 8; _row++) {
+    for (int _row = 0; _row < 1; _row++) {
         int _col;
         // Vectorized loop
-        for (_col = 0; _col + 4 <= 8; _col += 4) {
-            float32x4_t _vl0 = vld1q_f32(&input[_row * 8 + _col]);
+        for (_col = 0; _col + 4 <= 4096; _col += 4) {
+            float32x4_t _vl0 = vld1q_f32(&input[_row * 4096 + _col]);
             vst1q_f32(&x[_row][_col], _vl0);
         }
         // Scalar cleanup
-        for (; _col < 8; _col++) {
-            x[_row][_col] = input[_row * 8 + _col];
+        for (; _col < 4096; _col++) {
+            x[_row][_col] = input[_row * 4096 + _col];
         }
     }
 
     // TROWSUM: sum_result = rowsum(x)
-    for (int _row = 0; _row < 8; _row++) {
+    for (int _row = 0; _row < 1; _row++) {
         float _sum = 0.0f;
-        for (int _col = 0; _col < 8; _col++) {
+        for (int _col = 0; _col < 4096; _col++) {
             _sum += x[_row][_col];
         }
         sum_result[_row][0] = _sum;}
 
-    // FUSED LOOP (2 ops): result=TDIVS(sum_result,8.0f); output=TSTORE(result,0,0)
-    float32x4_t _vs1 = vdupq_n_f32(8.0f);
-    for (int _row = 0; _row < 8; _row++) {
+    // FUSED LOOP (2 ops): result=TDIVS(sum_result,4096.0f); output=TSTORE(result,0,0)
+    float32x4_t _vs1 = vdupq_n_f32(4096.0f);
+    for (int _row = 0; _row < 1; _row++) {
         int _col;
         // Vectorized loop
         for (_col = 0; _col + 4 <= 1; _col += 4) {
@@ -48,7 +48,48 @@ void aten_mean_row(float* input, float* output) {
         }
         // Scalar cleanup
         for (; _col < 1; _col++) {
-            result[_row][_col] = sum_result[_row][_col] / 8.0f;
+            result[_row][_col] = sum_result[_row][_col] / 4096.0f;
+            output[_row * 1 + _col] = result[_row][_col];
+        }
+    }
+
+    // FUSED LOOP (1 ops): x=TLOAD(input,0,0)
+    for (int _row = 0; _row < 1; _row++) {
+        int _col;
+        // Vectorized loop
+        for (_col = 0; _col + 4 <= 4096; _col += 4) {
+            float32x4_t _vl5 = vld1q_f32(&input[_row * 4096 + _col]);
+            vst1q_f32(&x[_row][_col], _vl5);
+        }
+        // Scalar cleanup
+        for (; _col < 4096; _col++) {
+            x[_row][_col] = input[_row * 4096 + _col];
+        }
+    }
+
+    // TROWSUM: sum_result = rowsum(x)
+    for (int _row = 0; _row < 1; _row++) {
+        float _sum = 0.0f;
+        for (int _col = 0; _col < 4096; _col++) {
+            _sum += x[_row][_col];
+        }
+        sum_result[_row][0] = _sum;}
+
+    // FUSED LOOP (2 ops): result=TDIVS(sum_result,4096.0f); output=TSTORE(result,0,0)
+    float32x4_t _vs6 = vdupq_n_f32(4096.0f);
+    for (int _row = 0; _row < 1; _row++) {
+        int _col;
+        // Vectorized loop
+        for (_col = 0; _col + 4 <= 1; _col += 4) {
+            float32x4_t _v7 = vld1q_f32(&sum_result[_row][_col]);
+            float32x4_t _vr8 = vdivq_f32(_v7, _vs6);
+            vst1q_f32(&result[_row][_col], _vr8);
+            float32x4_t _vs9 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 1 + _col], _vs9);
+        }
+        // Scalar cleanup
+        for (; _col < 1; _col++) {
+            result[_row][_col] = sum_result[_row][_col] / 4096.0f;
             output[_row * 1 + _col] = result[_row][_col];
         }
     }

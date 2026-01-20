@@ -6,27 +6,27 @@
 #include <stdio.h>
 
 void prims_pow(float* input_base, float* input_exp, float* output) {
-    float base[8][8];
-    float exp[8][8];
-    float log_base[8][8];
-    float product[8][8];
-    float result[8][8];
+    float base[1][4096];
+    float exp_tile[1][4096];
+    float log_base[1][4096];
+    float product[1][4096];
+    float result[1][4096];
 
-    // Loop fusion: 5 loop overheads saved
+    // Loop fusion: 11 loop overheads saved
 
-    // FUSED LOOP (6 ops): base=TLOAD(input_base,0,0); exp=TLOAD(input_exp,0,0); log_base=TLOG(base); product=TMUL(exp,log_base); result=TEXP(product); output=TSTORE(result,0,0)
-    for (int _row = 0; _row < 8; _row++) {
+    // FUSED LOOP (12 ops): base=TLOAD(input_base,0,0); exp_tile=TLOAD(input_exp,0,0); log_base=TLOG(base); product=TMUL(exp_tile,log_base); result=TEXP(product); output=TSTORE(result,0,0); base=TLOAD(input_base,0,0); exp_tile=TLOAD(input_exp,0,0); log_base=TLOG(base); product=TMUL(exp_tile,log_base); result=TEXP(product); output=TSTORE(result,0,0)
+    for (int _row = 0; _row < 1; _row++) {
         int _col;
         // Vectorized loop
-        for (_col = 0; _col + 4 <= 8; _col += 4) {
-            float32x4_t _vl0 = vld1q_f32(&input_base[_row * 8 + _col]);
+        for (_col = 0; _col + 4 <= 4096; _col += 4) {
+            float32x4_t _vl0 = vld1q_f32(&input_base[_row * 4096 + _col]);
             vst1q_f32(&base[_row][_col], _vl0);
-            float32x4_t _vl1 = vld1q_f32(&input_exp[_row * 8 + _col]);
-            vst1q_f32(&exp[_row][_col], _vl1);
+            float32x4_t _vl1 = vld1q_f32(&input_exp[_row * 4096 + _col]);
+            vst1q_f32(&exp_tile[_row][_col], _vl1);
             float32x4_t _v2 = vld1q_f32(&base[_row][_col]);
             float32x4_t _vr3 = _v2;
             vst1q_f32(&log_base[_row][_col], _vr3);
-            float32x4_t _v4 = vld1q_f32(&exp[_row][_col]);
+            float32x4_t _v4 = vld1q_f32(&exp_tile[_row][_col]);
             float32x4_t _v5 = vld1q_f32(&log_base[_row][_col]);
             float32x4_t _vr6 = vmulq_f32(_v4, _v5);
             vst1q_f32(&product[_row][_col], _vr6);
@@ -34,16 +34,38 @@ void prims_pow(float* input_base, float* input_exp, float* output) {
             float32x4_t _vr8 = _v7;
             vst1q_f32(&result[_row][_col], _vr8);
             float32x4_t _vs9 = vld1q_f32(&result[_row][_col]);
-            vst1q_f32(&output[_row * 8 + _col], _vs9);
+            vst1q_f32(&output[_row * 4096 + _col], _vs9);
+            float32x4_t _vl10 = vld1q_f32(&input_base[_row * 4096 + _col]);
+            vst1q_f32(&base[_row][_col], _vl10);
+            float32x4_t _vl11 = vld1q_f32(&input_exp[_row * 4096 + _col]);
+            vst1q_f32(&exp_tile[_row][_col], _vl11);
+            float32x4_t _v12 = vld1q_f32(&base[_row][_col]);
+            float32x4_t _vr13 = _v12;
+            vst1q_f32(&log_base[_row][_col], _vr13);
+            float32x4_t _v14 = vld1q_f32(&exp_tile[_row][_col]);
+            float32x4_t _v15 = vld1q_f32(&log_base[_row][_col]);
+            float32x4_t _vr16 = vmulq_f32(_v14, _v15);
+            vst1q_f32(&product[_row][_col], _vr16);
+            float32x4_t _v17 = vld1q_f32(&product[_row][_col]);
+            float32x4_t _vr18 = _v17;
+            vst1q_f32(&result[_row][_col], _vr18);
+            float32x4_t _vs19 = vld1q_f32(&result[_row][_col]);
+            vst1q_f32(&output[_row * 4096 + _col], _vs19);
         }
         // Scalar cleanup
-        for (; _col < 8; _col++) {
-            base[_row][_col] = input_base[_row * 8 + _col];
-            exp[_row][_col] = input_exp[_row * 8 + _col];
+        for (; _col < 4096; _col++) {
+            base[_row][_col] = input_base[_row * 4096 + _col];
+            exp_tile[_row][_col] = input_exp[_row * 4096 + _col];
             log_base[_row][_col] = logf(base[_row][_col]);
-            product[_row][_col] = exp[_row][_col] * log_base[_row][_col];
+            product[_row][_col] = exp_tile[_row][_col] * log_base[_row][_col];
             result[_row][_col] = expf(product[_row][_col]);
-            output[_row * 8 + _col] = result[_row][_col];
+            output[_row * 4096 + _col] = result[_row][_col];
+            base[_row][_col] = input_base[_row * 4096 + _col];
+            exp_tile[_row][_col] = input_exp[_row * 4096 + _col];
+            log_base[_row][_col] = logf(base[_row][_col]);
+            product[_row][_col] = exp_tile[_row][_col] * log_base[_row][_col];
+            result[_row][_col] = expf(product[_row][_col]);
+            output[_row * 4096 + _col] = result[_row][_col];
         }
     }
 
