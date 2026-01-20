@@ -32,23 +32,39 @@ private:
 
         // Loop fusion: 2 loop overheads saved
 
-        // FUSED (1 ops): TLOAD
-        // TLOAD: Operation
+        int tile_size = 4096;
 
-        // BARRIER: TROWSUM
+        int zero = 0;
 
-        // FUSED (2 ops): TDIVS; TSTORE
-        Divs(result, sum_result, 4096.0f, 64);
-        // TSTORE: Operation
+        for (int tile_idx = 0; tile_idx < num_full_tiles; tile_idx += 1) {
 
-        // FUSED (1 ops): TLOAD
-        // TLOAD: Operation
+            // FUSED (1 ops): TLOAD
+            // TLOAD: Operation
 
-        // BARRIER: TROWSUM
+            // TROWSUM: reduction operation
+            ReduceSum(sum_result, x, 1);
 
-        // FUSED (2 ops): TDIVS; TSTORE
-        Divs(result, sum_result, 4096.0f, 64);
-        // TSTORE: Operation
+            // FUSED (2 ops): TDIVS; TSTORE
+            Divs(result, sum_result, 4096.0f, 64);
+            // TSTORE: Operation
+
+        }
+
+        int has_tail = (tail_elements > zero) ? 1 : 0;
+
+        if (has_tail) {
+
+            // FUSED (1 ops): TLOAD
+            // TLOAD: Operation
+
+            // TROWSUM: reduction operation
+            ReduceSum(sum_result, x, 1);
+
+            // FUSED (2 ops): TDIVS; TSTORE
+            Divs(result, sum_result, 4096.0f, 64);
+            // TSTORE: Operation
+
+        }
 
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);

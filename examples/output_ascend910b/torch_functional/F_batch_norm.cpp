@@ -39,7 +39,7 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (2 ops): TADDS; TSQRT
         Adds(var, var, 1e-05f, 64);

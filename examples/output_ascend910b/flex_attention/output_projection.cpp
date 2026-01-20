@@ -38,7 +38,8 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: output = attn_out @ W_O
+        Matmul(output, attn_out, W_O, 8, 64);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

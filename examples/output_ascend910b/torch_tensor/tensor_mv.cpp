@@ -38,7 +38,8 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: result = self @ vec
+        Matmul(result, self, vec, 8, 1);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

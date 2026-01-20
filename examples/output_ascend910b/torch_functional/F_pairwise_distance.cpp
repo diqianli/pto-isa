@@ -38,7 +38,8 @@ private:
         Sub(diff, x1, x2, 64);
         Mul(sq_diff, diff, diff, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, sq_diff, 8);
 
         // FUSED (2 ops): TSQRT; TSTORE
         Sqrt(result, row_sum, 64);

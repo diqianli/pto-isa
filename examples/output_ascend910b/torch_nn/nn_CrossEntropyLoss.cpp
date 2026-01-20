@@ -37,20 +37,22 @@ private:
         // TLOAD: Operation
         Exp(exp_pred, pred, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(sum_exp, exp_pred, 8);
 
         // FUSED (1 ops): TLOG
         Ln(log_sum, sum_exp, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (2 ops): TMUL; TNEG
         Mul(weighted, target, log_softmax, 64);
         Neg(neg_weighted, weighted, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, neg_weighted, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, total_sum, 8.0f, 64);

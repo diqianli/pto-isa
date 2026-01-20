@@ -31,7 +31,11 @@ __global__ void nn_Bilinear_kernel(float* input1, float* input2, float* weight_m
         product[_row][_col] = x1[_row][_col] * x2[_row][_col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: result = product @ weight
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += product[_row][_k] * weight[_k][_col];
+        result[_row][_col] = _sum;}
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

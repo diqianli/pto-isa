@@ -28,7 +28,11 @@ __global__ void F_linear_kernel(float* input, float* weight_mem, float* output_m
         weight[_row][_col] = weight_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: output = x @ weight
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += x[_row][_k] * weight[_k][_col];
+        output[_row][_col] = _sum;}
 
     // FUSED (3 ops): bias=TLOAD(...); output=TADD(...); output_mem=TSTORE(...)
     if (_row < 8 && _col < 8) {

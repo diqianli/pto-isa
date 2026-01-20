@@ -30,23 +30,39 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 13 loop overheads saved
+        // Loop fusion: 12 loop overheads saved
 
-        // FUSED (14 ops): TLOAD; TNEG; TEXP; TADDS; TRECIP; TMUL; TSTORE; TLOAD; TNEG; TEXP; TADDS; TRECIP; TMUL; TSTORE
-        // TLOAD: Operation
-        Neg(neg_x, x, 64);
-        Exp(exp_neg, neg_x, 64);
-        Adds(one_plus, exp_neg, 1.0f, 64);
-        Reciprocal(sigmoid_out, one_plus, 64);
-        Mul(result, x, sigmoid_out, 64);
-        // TSTORE: Operation
-        // TLOAD: Operation
-        Neg(neg_x, x, 64);
-        Exp(exp_neg, neg_x, 64);
-        Adds(one_plus, exp_neg, 1.0f, 64);
-        Reciprocal(sigmoid_out, one_plus, 64);
-        Mul(result, x, sigmoid_out, 64);
-        // TSTORE: Operation
+        int tile_size = 4096;
+
+        int zero = 0;
+
+        for (int tile_idx = 0; tile_idx < num_full_tiles; tile_idx += 1) {
+
+            // FUSED (7 ops): TLOAD; TNEG; TEXP; TADDS; TRECIP; TMUL; TSTORE
+            // TLOAD: Operation
+            Neg(neg_x, x, 64);
+            Exp(exp_neg, neg_x, 64);
+            Adds(one_plus, exp_neg, 1.0f, 64);
+            Reciprocal(sigmoid_out, one_plus, 64);
+            Mul(result, x, sigmoid_out, 64);
+            // TSTORE: Operation
+
+        }
+
+        int has_tail = (tail_elements > zero) ? 1 : 0;
+
+        if (has_tail) {
+
+            // FUSED (7 ops): TLOAD; TNEG; TEXP; TADDS; TRECIP; TMUL; TSTORE
+            // TLOAD: Operation
+            Neg(neg_x, x, 64);
+            Exp(exp_neg, neg_x, 64);
+            Adds(one_plus, exp_neg, 1.0f, 64);
+            Reciprocal(sigmoid_out, one_plus, 64);
+            Mul(result, x, sigmoid_out, 64);
+            // TSTORE: Operation
+
+        }
 
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);

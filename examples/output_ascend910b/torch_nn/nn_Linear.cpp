@@ -37,7 +37,8 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: mm_result = x @ weight
+        Matmul(mm_result, x, weight, 8, 8);
 
         // FUSED (2 ops): TADD; TSTORE
         Add(result, mm_result, bias, 64);

@@ -28,23 +28,31 @@ __global__ void score_to_weight_kernel(float* scores_mem, float* weights_mem) {
         scores[_row][_col] = scores_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(scores)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += scores[_row][_c];
+        row_sum[_row][0] = _sum;}
 
     // FUSED (1 ops): row_sum=TDIVS(...)
     if (_row < 8 && _col < 1) {
         row_sum[_row][_col] = row_sum[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): exp_scores=TEXP(...)
     if (_row < 8 && _col < 8) {
         exp_scores[_row][_col] = __expf(shifted[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(exp_scores)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_scores[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TROWEXPANDDIV
+    // TROWEXPANDDIV: Not implemented
 
     // FUSED (1 ops): weights_mem=TSTORE(...)
     if (_row < 8 && _col < 8) {

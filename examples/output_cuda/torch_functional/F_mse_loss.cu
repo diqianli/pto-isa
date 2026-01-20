@@ -32,9 +32,13 @@ __global__ void F_mse_loss_kernel(float* input, float* target_mem, float* output
         sq_diff[_row][_col] = diff[_row][_col] * diff;
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(sq_diff)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += sq_diff[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

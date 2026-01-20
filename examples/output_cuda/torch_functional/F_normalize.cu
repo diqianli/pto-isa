@@ -29,7 +29,11 @@ __global__ void F_normalize_kernel(float* input, float* output) {
         x_sq[_row][_col] = x[_row][_col] * x[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(x_sq)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x_sq[_row][_c];
+        row_sum[_row][0] = _sum;}
 
     // FUSED (2 ops): norm=TSQRT(...); norm=TADDS(...)
     if (_row < 8 && _col < 1) {
@@ -37,7 +41,7 @@ __global__ void F_normalize_kernel(float* input, float* output) {
         norm[_row][_col] = norm[_row][_col] + 1e-12f;
     }
 
-    // BARRIER: TROWEXPANDDIV
+    // TROWEXPANDDIV: Not implemented
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

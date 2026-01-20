@@ -27,7 +27,11 @@ __global__ void aten_mm_kernel(float* input_a, float* input_b, float* output) {
         b[_row][_col] = input_b[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: result = a @ b
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += a[_row][_k] * b[_k][_col];
+        result[_row][_col] = _sum;}
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

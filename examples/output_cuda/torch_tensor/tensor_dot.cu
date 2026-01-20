@@ -29,7 +29,11 @@ __global__ void tensor_dot_kernel(float* input_self, float* input_other, float* 
         prod[_row][_col] = self[_row][_col] * other[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: result = rowsum(prod)
+    if (_col == 0 && _row < 1) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 64; _c++) _sum += prod[_row][_c];
+        result[_row][0] = _sum;}
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 1 && _col < 1) {

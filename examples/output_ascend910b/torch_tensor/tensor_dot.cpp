@@ -37,7 +37,8 @@ private:
         // TLOAD: Operation
         Mul(prod, self, other, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(result, prod, 1);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

@@ -30,25 +30,41 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 15 loop overheads saved
+        // Loop fusion: 14 loop overheads saved
 
-        // FUSED (16 ops): TLOAD; TEXP; TNEG; TEXP; TSUB; TADD; TDIV; TSTORE; TLOAD; TEXP; TNEG; TEXP; TSUB; TADD; TDIV; TSTORE
-        // TLOAD: Operation
-        Exp(exp_x, x, 64);
-        Neg(neg_x, x, 64);
-        Exp(exp_neg_x, neg_x, 64);
-        Sub(numerator, exp_x, exp_neg_x, 64);
-        Add(denominator, exp_x, exp_neg_x, 64);
-        Div(result, numerator, denominator, 64);
-        // TSTORE: Operation
-        // TLOAD: Operation
-        Exp(exp_x, x, 64);
-        Neg(neg_x, x, 64);
-        Exp(exp_neg_x, neg_x, 64);
-        Sub(numerator, exp_x, exp_neg_x, 64);
-        Add(denominator, exp_x, exp_neg_x, 64);
-        Div(result, numerator, denominator, 64);
-        // TSTORE: Operation
+        int tile_size = 4096;
+
+        int zero = 0;
+
+        for (int tile_idx = 0; tile_idx < num_full_tiles; tile_idx += 1) {
+
+            // FUSED (8 ops): TLOAD; TEXP; TNEG; TEXP; TSUB; TADD; TDIV; TSTORE
+            // TLOAD: Operation
+            Exp(exp_x, x, 64);
+            Neg(neg_x, x, 64);
+            Exp(exp_neg_x, neg_x, 64);
+            Sub(numerator, exp_x, exp_neg_x, 64);
+            Add(denominator, exp_x, exp_neg_x, 64);
+            Div(result, numerator, denominator, 64);
+            // TSTORE: Operation
+
+        }
+
+        int has_tail = (tail_elements > zero) ? 1 : 0;
+
+        if (has_tail) {
+
+            // FUSED (8 ops): TLOAD; TEXP; TNEG; TEXP; TSUB; TADD; TDIV; TSTORE
+            // TLOAD: Operation
+            Exp(exp_x, x, 64);
+            Neg(neg_x, x, 64);
+            Exp(exp_neg_x, neg_x, 64);
+            Sub(numerator, exp_x, exp_neg_x, 64);
+            Add(denominator, exp_x, exp_neg_x, 64);
+            Div(result, numerator, denominator, 64);
+            // TSTORE: Operation
+
+        }
 
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);

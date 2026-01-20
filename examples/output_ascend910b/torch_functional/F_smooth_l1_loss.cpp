@@ -42,9 +42,10 @@ private:
         Adds(l1_part, abs_diff, -0.5f, 64);
         Min(loss, l2_part, l1_part, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, loss, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, result, 64.0f, 64);

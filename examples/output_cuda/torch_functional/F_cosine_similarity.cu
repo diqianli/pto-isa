@@ -37,7 +37,11 @@ __global__ void F_cosine_similarity_kernel(float* input1, float* input2, float* 
         dot_prod[_row][_col] = x1[_row][_col] * x2[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: dot_sum = rowsum(dot_prod)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += dot_prod[_row][_c];
+        dot_sum[_row][0] = _sum;}
 
     // FUSED (2 ops): x1_sq=TMUL(...); x2_sq=TMUL(...)
     if (_row < 8 && _col < 8) {
@@ -45,9 +49,17 @@ __global__ void F_cosine_similarity_kernel(float* input1, float* input2, float* 
         x2_sq[_row][_col] = x2[_row][_col] * x2[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: x1_norm_sq = rowsum(x1_sq)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x1_sq[_row][_c];
+        x1_norm_sq[_row][0] = _sum;}
 
-    // BARRIER: TROWSUM
+    // TROWSUM: x2_norm_sq = rowsum(x2_sq)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x2_sq[_row][_c];
+        x2_norm_sq[_row][0] = _sum;}
 
     // FUSED (6 ops): x1_norm=TSQRT(...); x2_norm=TSQRT(...); norm_prod=TMUL(...); norm_prod=TADDS(...); result=TDIV(...); output=TSTORE(...)
     if (_row < 8 && _col < 1) {

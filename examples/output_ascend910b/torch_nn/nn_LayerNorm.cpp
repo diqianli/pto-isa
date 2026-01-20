@@ -35,24 +35,26 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, x, 8);
 
         // FUSED (1 ops): TDIVS
         Divs(mean, row_sum, 8.0f, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (1 ops): TMUL
         Mul(squared, x_minus_mean, x_minus_mean, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(var_sum, squared, 8);
 
         // FUSED (3 ops): TDIVS; TADDS; TSQRT
         Divs(variance, var_sum, 8.0f, 64);
         Adds(var_eps, variance, 1e-05f, 64);
         Sqrt(std, var_eps, 64);
 
-        // BARRIER: TROWEXPANDDIV
+        // TROWEXPANDDIV: Not implemented
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

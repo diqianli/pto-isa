@@ -1140,6 +1140,18 @@ OPCODE_CATEGORY = {
     # Control flow
     "FOR": OpCategory.CONTROL_FLOW,
     "ENDFOR": OpCategory.CONTROL_FLOW,
+    "IF": OpCategory.CONTROL_FLOW,
+    "ELSE": OpCategory.CONTROL_FLOW,
+    "ENDIF": OpCategory.CONTROL_FLOW,
+    
+    # Scalar instructions (fusion barrier)
+    "SLI": OpCategory.OTHER,
+    "SCMP": OpCategory.OTHER,
+    "SADD": OpCategory.OTHER,
+    "SSUB": OpCategory.OTHER,
+    "SMUL": OpCategory.OTHER,
+    "SDIV": OpCategory.OTHER,
+    "SMOV": OpCategory.OTHER,
     
     # Declarations
     "TILE_DECL": OpCategory.DECLARATION,
@@ -1167,6 +1179,9 @@ def is_fusable(opcode: str) -> bool:
 def is_fusion_barrier(opcode: str) -> bool:
     """Check if an operation is a fusion barrier (stops fusion)."""
     category = get_category(opcode)
+    # Scalar instructions and control flow act as fusion barriers
+    if opcode in ("SLI", "SCMP", "SADD", "SSUB", "SMUL", "SDIV", "SMOV"):
+        return True
     return category in {
         OpCategory.REDUCTION,
         OpCategory.MATMUL,
@@ -1558,13 +1573,48 @@ class FusedCodeGenerator:
             if op.opcode == "TLOAD":
                 vr = self._get_unique_var("_vl")
                 memref = op.operands[0]
-                lines.append(f"{indent}{vec_type} {vr} = vld1q_{suffix}(&{memref}[_row * {op.shape.cols} + _col]);")
+                # Handle dynamic row/col offsets
+                row_off = op.operands[1] if len(op.operands) > 1 else "0"
+                col_off = op.operands[2] if len(op.operands) > 2 else "0"
+                if row_off == "0" and col_off == "0":
+                    mem_idx = f"_row * {op.shape.cols} + _col"
+                else:
+                    tile_size = op.shape.rows * op.shape.cols
+                    row_offset = f"({row_off}) * {tile_size}" if row_off != "0" else ""
+                    col_offset = col_off if col_off != "0" else ""
+                    base_idx = "_row * {} + _col".format(op.shape.cols)
+                    if row_offset and col_offset:
+                        mem_idx = f"{row_offset} + {col_offset} + {base_idx}"
+                    elif row_offset:
+                        mem_idx = f"{row_offset} + {base_idx}"
+                    elif col_offset:
+                        mem_idx = f"{col_offset} + {base_idx}"
+                    else:
+                        mem_idx = base_idx
+                lines.append(f"{indent}{vec_type} {vr} = vld1q_{suffix}(&{memref}[{mem_idx}]);")
                 lines.append(f"{indent}vst1q_{suffix}(&{op.dst}[_row][_col], {vr});")
             elif op.opcode == "TSTORE":
                 vs = self._get_unique_var("_vs")
                 src_tile, memref = op.operands[0], op.dst
+                row_off = op.operands[1] if len(op.operands) > 1 else "0"
+                col_off = op.operands[2] if len(op.operands) > 2 else "0"
+                if row_off == "0" and col_off == "0":
+                    mem_idx = f"_row * {op.shape.cols} + _col"
+                else:
+                    tile_size = op.shape.rows * op.shape.cols
+                    row_offset = f"({row_off}) * {tile_size}" if row_off != "0" else ""
+                    col_offset = col_off if col_off != "0" else ""
+                    base_idx = "_row * {} + _col".format(op.shape.cols)
+                    if row_offset and col_offset:
+                        mem_idx = f"{row_offset} + {col_offset} + {base_idx}"
+                    elif row_offset:
+                        mem_idx = f"{row_offset} + {base_idx}"
+                    elif col_offset:
+                        mem_idx = f"{col_offset} + {base_idx}"
+                    else:
+                        mem_idx = base_idx
                 lines.append(f"{indent}{vec_type} {vs} = vld1q_{suffix}(&{src_tile}[_row][_col]);")
-                lines.append(f"{indent}vst1q_{suffix}(&{memref}[_row * {op.shape.cols} + _col], {vs});")
+                lines.append(f"{indent}vst1q_{suffix}(&{memref}[{mem_idx}], {vs});")
         
         return lines
     
@@ -1592,10 +1642,44 @@ class FusedCodeGenerator:
         elif category == OpCategory.MEMORY:
             if op.opcode == "TLOAD":
                 memref = op.operands[0]
-                lines.append(f"{indent}{op.dst}[_row][_col] = {memref}[_row * {op.shape.cols} + _col];")
+                row_off = op.operands[1] if len(op.operands) > 1 else "0"
+                col_off = op.operands[2] if len(op.operands) > 2 else "0"
+                if row_off == "0" and col_off == "0":
+                    mem_idx = f"_row * {op.shape.cols} + _col"
+                else:
+                    tile_size = op.shape.rows * op.shape.cols
+                    row_offset = f"({row_off}) * {tile_size}" if row_off != "0" else ""
+                    col_offset = col_off if col_off != "0" else ""
+                    base_idx = "_row * {} + _col".format(op.shape.cols)
+                    if row_offset and col_offset:
+                        mem_idx = f"{row_offset} + {col_offset} + {base_idx}"
+                    elif row_offset:
+                        mem_idx = f"{row_offset} + {base_idx}"
+                    elif col_offset:
+                        mem_idx = f"{col_offset} + {base_idx}"
+                    else:
+                        mem_idx = base_idx
+                lines.append(f"{indent}{op.dst}[_row][_col] = {memref}[{mem_idx}];")
             elif op.opcode == "TSTORE":
                 src_tile, memref = op.operands[0], op.dst
-                lines.append(f"{indent}{memref}[_row * {op.shape.cols} + _col] = {src_tile}[_row][_col];")
+                row_off = op.operands[1] if len(op.operands) > 1 else "0"
+                col_off = op.operands[2] if len(op.operands) > 2 else "0"
+                if row_off == "0" and col_off == "0":
+                    mem_idx = f"_row * {op.shape.cols} + _col"
+                else:
+                    tile_size = op.shape.rows * op.shape.cols
+                    row_offset = f"({row_off}) * {tile_size}" if row_off != "0" else ""
+                    col_offset = col_off if col_off != "0" else ""
+                    base_idx = "_row * {} + _col".format(op.shape.cols)
+                    if row_offset and col_offset:
+                        mem_idx = f"{row_offset} + {col_offset} + {base_idx}"
+                    elif row_offset:
+                        mem_idx = f"{row_offset} + {base_idx}"
+                    elif col_offset:
+                        mem_idx = f"{col_offset} + {base_idx}"
+                    else:
+                        mem_idx = base_idx
+                lines.append(f"{indent}{memref}[{mem_idx}] = {src_tile}[_row][_col];")
         
         return lines
     
@@ -1687,6 +1771,15 @@ class MockInstruction:
     raw_line: str = ""
 
 
+def _get_operand_str(operand):
+    """Convert an operand to string representation."""
+    if hasattr(operand, 'name'):
+        return operand.name
+    elif hasattr(operand, 'value'):
+        return str(operand.value)
+    return str(operand)
+
+
 def convert_program_to_mock_instructions(program):
     """Convert PTOProgram to mock instructions for fusion optimizer."""
     tile_info = {}
@@ -1744,14 +1837,71 @@ def convert_program_to_mock_instructions(program):
                 operands=[instr.a.name, instr.b.name]
             ))
         elif opcode == "TLOAD":
+            # Handle dynamic row/col indices
+            row_off = _get_operand_str(instr.row_offset)
+            col_off = _get_operand_str(instr.col_offset)
             mock_instructions.append(MockInstruction(
                 opcode="TLOAD", dst=instr.dst.name,
-                operands=[instr.src_mem.name, "0", "0"]
+                operands=[instr.src_mem.name, row_off, col_off]
             ))
         elif opcode == "TSTORE":
+            # Handle dynamic row/col indices
+            row_off = _get_operand_str(instr.row_offset)
+            col_off = _get_operand_str(instr.col_offset)
             mock_instructions.append(MockInstruction(
                 opcode="TSTORE", dst=instr.dst_mem.name,
-                operands=[instr.src.name, "0", "0"]
+                operands=[instr.src.name, row_off, col_off]
+            ))
+        # =========== Control Flow Instructions ===========
+        elif opcode == "FOR":
+            mock_instructions.append(MockInstruction(
+                opcode="FOR", dst=instr.iv.name,
+                operands=[
+                    _get_operand_str(instr.lb),
+                    _get_operand_str(instr.ub),
+                    _get_operand_str(instr.step)
+                ]
+            ))
+        elif opcode == "ENDFOR":
+            mock_instructions.append(MockInstruction(
+                opcode="ENDFOR", dst="",
+                operands=[]
+            ))
+        elif opcode == "IF":
+            mock_instructions.append(MockInstruction(
+                opcode="IF", dst="",
+                operands=[instr.cond.name]
+            ))
+        elif opcode == "ELSE":
+            mock_instructions.append(MockInstruction(
+                opcode="ELSE", dst="",
+                operands=[]
+            ))
+        elif opcode == "ENDIF":
+            mock_instructions.append(MockInstruction(
+                opcode="ENDIF", dst="",
+                operands=[]
+            ))
+        # =========== Scalar Instructions ===========
+        elif opcode == "SLI":
+            mock_instructions.append(MockInstruction(
+                opcode="SLI", dst=instr.dst.name,
+                operands=[str(instr.imm.value)]
+            ))
+        elif opcode == "SCMP":
+            mock_instructions.append(MockInstruction(
+                opcode="SCMP", dst=instr.dst.name,
+                operands=[instr.src0.name, instr.src1.name, instr.cmp_mode.value]
+            ))
+        elif opcode in ("SADD", "SSUB", "SMUL", "SDIV"):
+            mock_instructions.append(MockInstruction(
+                opcode=opcode, dst=instr.dst.name,
+                operands=[instr.src0.name, _get_operand_str(instr.src1)]
+            ))
+        elif opcode == "SMOV":
+            mock_instructions.append(MockInstruction(
+                opcode="SMOV", dst=instr.dst.name,
+                operands=[instr.src.name]
             ))
     
     return tile_info, mock_instructions
@@ -1764,18 +1914,33 @@ def _gen_arm64_barrier_op(instr, rows, cols, dtype, tile_info):
     
     if instr.opcode == "TLOAD":
         dst, src_mem = instr.dst, instr.operands[0]
-        lines.append(f"// TLOAD: {dst} = load({src_mem})")
+        row_off = instr.operands[1] if len(instr.operands) > 1 else "0"
+        col_off = instr.operands[2] if len(instr.operands) > 2 else "0"
+        # Determine if offsets are variables or constants
+        row_offset_expr = f"({row_off}) * {rows}" if row_off != "0" else "0"
+        col_offset_expr = col_off if col_off != "0" else "0"
+        lines.append(f"// TLOAD: {dst} = load({src_mem}[{row_off}, {col_off}])")
         lines.append(f"for (int _row = 0; _row < {rows}; _row++) {{")
         lines.append(f"    for (int _col = 0; _col < {cols}; _col++) {{")
-        lines.append(f"        {dst}[_row][_col] = {src_mem}[_row * {cols} + _col];")
+        if row_off == "0" and col_off == "0":
+            lines.append(f"        {dst}[_row][_col] = {src_mem}[_row * {cols} + _col];")
+        else:
+            lines.append(f"        {dst}[_row][_col] = {src_mem}[({row_offset_expr} + _row) * {cols} + {col_offset_expr} + _col];")
         lines.append(f"    }}}}")
         
     elif instr.opcode == "TSTORE":
         dst_mem, src = instr.dst, instr.operands[0]
-        lines.append(f"// TSTORE: store({src}) -> {dst_mem}")
+        row_off = instr.operands[1] if len(instr.operands) > 1 else "0"
+        col_off = instr.operands[2] if len(instr.operands) > 2 else "0"
+        row_offset_expr = f"({row_off}) * {rows}" if row_off != "0" else "0"
+        col_offset_expr = col_off if col_off != "0" else "0"
+        lines.append(f"// TSTORE: store({src}) -> {dst_mem}[{row_off}, {col_off}]")
         lines.append(f"for (int _row = 0; _row < {rows}; _row++) {{")
         lines.append(f"    for (int _col = 0; _col < {cols}; _col++) {{")
-        lines.append(f"        {dst_mem}[_row * {cols} + _col] = {src}[_row][_col];")
+        if row_off == "0" and col_off == "0":
+            lines.append(f"        {dst_mem}[_row * {cols} + _col] = {src}[_row][_col];")
+        else:
+            lines.append(f"        {dst_mem}[({row_offset_expr} + _row) * {cols} + {col_offset_expr} + _col] = {src}[_row][_col];")
         lines.append(f"    }}}}")
         
     elif instr.opcode == "TROWSUM":
@@ -1824,6 +1989,165 @@ def _gen_arm64_barrier_op(instr, rows, cols, dtype, tile_info):
         lines.append(f"        for (int _k = 0; _k < {k}; _k++) {{")
         lines.append(f"            _sum += {a}[_i][_k] * {b}[_k][_j];}}")
         lines.append(f"        {dst}[_i][_j] = _sum;}}}}")
+    
+    # =========== Control Flow Instructions ===========
+    elif instr.opcode == "FOR":
+        iv = instr.dst  # Induction variable
+        lb = instr.operands[0]  # Lower bound
+        ub = instr.operands[1]  # Upper bound
+        step = instr.operands[2] if len(instr.operands) > 2 else "1"
+        lines.append(f"for (int {iv} = {lb}; {iv} < {ub}; {iv} += {step}) {{")
+        
+    elif instr.opcode == "ENDFOR":
+        lines.append("}")
+        
+    elif instr.opcode == "IF":
+        cond = instr.operands[0] if instr.operands else "true"
+        lines.append(f"if ({cond}) {{")
+        
+    elif instr.opcode == "ELSE":
+        lines.append("} else {")
+        
+    elif instr.opcode == "ENDIF":
+        lines.append("}")
+    
+    # =========== Scalar Instructions ===========
+    elif instr.opcode == "SLI":
+        dst = instr.dst
+        imm = instr.operands[0]
+        lines.append(f"int {dst} = {imm};")
+        
+    elif instr.opcode == "SCMP":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        cmp_mode = instr.operands[2] if len(instr.operands) > 2 else "eq"
+        cmp_ops = {"eq": "==", "ne": "!=", "gt": ">", "ge": ">=", "lt": "<", "le": "<="}
+        cmp_op = cmp_ops.get(cmp_mode, ">")
+        lines.append(f"int {dst} = ({src0} {cmp_op} {src1}) ? 1 : 0;")
+        
+    elif instr.opcode == "SADD":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        lines.append(f"int {dst} = {src0} + {src1};")
+        
+    elif instr.opcode == "SSUB":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        lines.append(f"int {dst} = {src0} - {src1};")
+        
+    elif instr.opcode == "SMUL":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        lines.append(f"int {dst} = {src0} * {src1};")
+        
+    elif instr.opcode == "SDIV":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        lines.append(f"int {dst} = {src0} / {src1};")
+        
+    elif instr.opcode == "SMOV":
+        dst = instr.dst
+        src = instr.operands[0]
+        lines.append(f"int {dst} = {src};")
+        
+    else:
+        lines.append(f"// {instr.opcode}: Not implemented")
+    
+    return lines
+
+
+def _gen_cuda_barrier_op(instr, rows, cols, dtype, tile_info):
+    """Generate CUDA code for barrier operations (control flow, scalar, etc.)."""
+    lines = []
+    c_type = CUDA_TYPE_MAP.get(dtype, "float")
+    
+    if instr.opcode == "FOR":
+        iv = instr.dst
+        lb = instr.operands[0]
+        ub = instr.operands[1]
+        step = instr.operands[2] if len(instr.operands) > 2 else "1"
+        lines.append(f"for (int {iv} = {lb}; {iv} < {ub}; {iv} += {step}) {{")
+        
+    elif instr.opcode == "ENDFOR":
+        lines.append("}")
+        
+    elif instr.opcode == "IF":
+        cond = instr.operands[0] if instr.operands else "true"
+        lines.append(f"if ({cond}) {{")
+        
+    elif instr.opcode == "ELSE":
+        lines.append("} else {")
+        
+    elif instr.opcode == "ENDIF":
+        lines.append("}")
+    
+    elif instr.opcode == "SLI":
+        dst = instr.dst
+        imm = instr.operands[0]
+        lines.append(f"int {dst} = {imm};")
+        
+    elif instr.opcode == "SCMP":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        cmp_mode = instr.operands[2] if len(instr.operands) > 2 else "eq"
+        cmp_ops = {"eq": "==", "ne": "!=", "gt": ">", "ge": ">=", "lt": "<", "le": "<="}
+        cmp_op = cmp_ops.get(cmp_mode, ">")
+        lines.append(f"int {dst} = ({src0} {cmp_op} {src1}) ? 1 : 0;")
+        
+    elif instr.opcode in ("SADD", "SSUB", "SMUL", "SDIV"):
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        op_map = {"SADD": "+", "SSUB": "-", "SMUL": "*", "SDIV": "/"}
+        op = op_map.get(instr.opcode, "+")
+        lines.append(f"int {dst} = {src0} {op} {src1};")
+        
+    elif instr.opcode == "SMOV":
+        lines.append(f"int {instr.dst} = {instr.operands[0]};")
+    
+    elif instr.opcode == "TLOAD":
+        dst, src_mem = instr.dst, instr.operands[0]
+        row_off = instr.operands[1] if len(instr.operands) > 1 else "0"
+        col_off = instr.operands[2] if len(instr.operands) > 2 else "0"
+        row_offset_expr = f"({row_off}) * {rows}" if row_off != "0" else "0"
+        col_offset_expr = col_off if col_off != "0" else "0"
+        lines.append(f"// TLOAD: {dst} = load({src_mem}[{row_off}, {col_off}])")
+        if row_off == "0" and col_off == "0":
+            lines.append(f"if (_row < {rows} && _col < {cols}) {dst}[_row][_col] = {src_mem}[_row * {cols} + _col];")
+        else:
+            lines.append(f"if (_row < {rows} && _col < {cols}) {dst}[_row][_col] = {src_mem}[({row_offset_expr} + _row) * {cols} + {col_offset_expr} + _col];")
+        
+    elif instr.opcode == "TSTORE":
+        dst_mem, src = instr.dst, instr.operands[0]
+        row_off = instr.operands[1] if len(instr.operands) > 1 else "0"
+        col_off = instr.operands[2] if len(instr.operands) > 2 else "0"
+        row_offset_expr = f"({row_off}) * {rows}" if row_off != "0" else "0"
+        col_offset_expr = col_off if col_off != "0" else "0"
+        lines.append(f"// TSTORE: store({src}) -> {dst_mem}[{row_off}, {col_off}]")
+        if row_off == "0" and col_off == "0":
+            lines.append(f"if (_row < {rows} && _col < {cols}) {dst_mem}[_row * {cols} + _col] = {src}[_row][_col];")
+        else:
+            lines.append(f"if (_row < {rows} && _col < {cols}) {dst_mem}[({row_offset_expr} + _row) * {cols} + {col_offset_expr} + _col] = {src}[_row][_col];")
+        
+    elif instr.opcode == "TROWSUM":
+        dst, src = instr.dst, instr.operands[0]
+        src_info = tile_info.get(src)
+        src_cols = src_info.cols if src_info else cols
+        lines.append(f"// TROWSUM: {dst} = rowsum({src})")
+        lines.append(f"if (_col == 0 && _row < {rows}) {{")
+        lines.append(f"    {c_type} _sum = 0.0f;")
+        lines.append(f"    for (int _c = 0; _c < {src_cols}; _c++) _sum += {src}[_row][_c];")
+        lines.append(f"    {dst}[_row][0] = _sum;}}")
+        
+    elif instr.opcode == "TMATMUL":
+        dst, a, b = instr.dst, instr.operands[0], instr.operands[1]
+        a_info = tile_info.get(a)
+        k = a_info.cols if a_info else 8
+        lines.append(f"// TMATMUL: {dst} = {a} @ {b}")
+        lines.append(f"if (_row < {rows} && _col < {cols}) {{")
+        lines.append(f"    {c_type} _sum = 0.0f;")
+        lines.append(f"    for (int _k = 0; _k < {k}; _k++) _sum += {a}[_row][_k] * {b}[_k][_col];")
+        lines.append(f"    {dst}[_row][_col] = _sum;}}")
+        
     else:
         lines.append(f"// {instr.opcode}: Not implemented")
     
@@ -1844,7 +2168,28 @@ def _gen_cuda_single_op(instr, tile_info):
     
     # Get tile shape for memory operations
     dst_info = tile_info.get(instr.dst)
+    rows = dst_info.rows if dst_info else 8
     cols = dst_info.cols if dst_info else 8
+    tile_size = rows * cols
+    
+    # Helper function to compute memory index with dynamic offset
+    def compute_mem_idx(operands, cols, tile_size):
+        row_off = operands[1] if len(operands) > 1 else "0"
+        col_off = operands[2] if len(operands) > 2 else "0"
+        if row_off == "0" and col_off == "0":
+            return f"_row * {cols} + _col"
+        else:
+            row_offset = f"({row_off}) * {tile_size}" if row_off != "0" else ""
+            col_offset = col_off if col_off != "0" else ""
+            base_idx = f"_row * {cols} + _col"
+            if row_offset and col_offset:
+                return f"{row_offset} + {col_offset} + {base_idx}"
+            elif row_offset:
+                return f"{row_offset} + {base_idx}"
+            elif col_offset:
+                return f"{col_offset} + {base_idx}"
+            else:
+                return base_idx
     
     if op == "TADD": return f"{dst} = {src0} + {src1};"
     elif op == "TSUB": return f"{dst} = {src0} - {src1};"
@@ -1865,12 +2210,94 @@ def _gen_cuda_single_op(instr, tile_info):
     elif op == "TMULS": return f"{dst} = {src0} * {src1};"
     elif op == "TDIVS": return f"{dst} = {src0} / {src1};"
     elif op == "TEXPANDS": return f"{dst} = {instr.operands[0]};"
-    elif op == "TLOAD": return f"{dst} = {instr.operands[0]}[_row * {cols} + _col];"
+    elif op == "TLOAD": 
+        memref = instr.operands[0]
+        mem_idx = compute_mem_idx(instr.operands, cols, tile_size)
+        return f"{dst} = {memref}[{mem_idx}];"
     elif op == "TSTORE": 
         src_info = tile_info.get(instr.operands[0])
         src_cols = src_info.cols if src_info else cols
-        return f"{instr.dst}[_row * {src_cols} + _col] = {instr.operands[0]}[_row][_col];"
+        src_rows = src_info.rows if src_info else rows
+        src_tile_size = src_rows * src_cols
+        mem_idx = compute_mem_idx(instr.operands, src_cols, src_tile_size)
+        return f"{instr.dst}[{mem_idx}] = {instr.operands[0]}[_row][_col];"
     return f"// Unknown op: {op}"
+
+
+def _gen_ascend_barrier_op(instr, rows, cols, dtype, tile_info):
+    """Generate Ascend C code for barrier operations (control flow, scalar, etc.)."""
+    lines = []
+    
+    if instr.opcode == "FOR":
+        iv = instr.dst
+        lb = instr.operands[0]
+        ub = instr.operands[1]
+        step = instr.operands[2] if len(instr.operands) > 2 else "1"
+        lines.append(f"for (int {iv} = {lb}; {iv} < {ub}; {iv} += {step}) {{")
+        
+    elif instr.opcode == "ENDFOR":
+        lines.append("}")
+        
+    elif instr.opcode == "IF":
+        cond = instr.operands[0] if instr.operands else "true"
+        lines.append(f"if ({cond}) {{")
+        
+    elif instr.opcode == "ELSE":
+        lines.append("} else {")
+        
+    elif instr.opcode == "ENDIF":
+        lines.append("}")
+    
+    elif instr.opcode == "SLI":
+        lines.append(f"int {instr.dst} = {instr.operands[0]};")
+        
+    elif instr.opcode == "SCMP":
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        cmp_mode = instr.operands[2] if len(instr.operands) > 2 else "eq"
+        cmp_ops = {"eq": "==", "ne": "!=", "gt": ">", "ge": ">=", "lt": "<", "le": "<="}
+        cmp_op = cmp_ops.get(cmp_mode, ">")
+        lines.append(f"int {dst} = ({src0} {cmp_op} {src1}) ? 1 : 0;")
+        
+    elif instr.opcode in ("SADD", "SSUB", "SMUL", "SDIV"):
+        dst = instr.dst
+        src0, src1 = instr.operands[0], instr.operands[1]
+        op_map = {"SADD": "+", "SSUB": "-", "SMUL": "*", "SDIV": "/"}
+        op = op_map.get(instr.opcode, "+")
+        lines.append(f"int {dst} = {src0} {op} {src1};")
+        
+    elif instr.opcode == "SMOV":
+        lines.append(f"int {instr.dst} = {instr.operands[0]};")
+    
+    elif instr.opcode == "TLOAD":
+        dst, src_mem = instr.dst, instr.operands[0]
+        row_off = instr.operands[1] if len(instr.operands) > 1 else "0"
+        col_off = instr.operands[2] if len(instr.operands) > 2 else "0"
+        tile_size = rows * cols
+        lines.append(f"// TLOAD: {dst} = load({src_mem}[{row_off}, {col_off}])")
+        lines.append(f"DataCopy({dst}, {src_mem}[({row_off}) * {tile_size}], {tile_size});")
+        
+    elif instr.opcode == "TSTORE":
+        dst_mem, src = instr.dst, instr.operands[0]
+        row_off = instr.operands[1] if len(instr.operands) > 1 else "0"
+        col_off = instr.operands[2] if len(instr.operands) > 2 else "0"
+        tile_size = rows * cols
+        lines.append(f"// TSTORE: store({src}) -> {dst_mem}[{row_off}, {col_off}]")
+        lines.append(f"DataCopy({dst_mem}[({row_off}) * {tile_size}], {src}, {tile_size});")
+        
+    elif instr.opcode == "TROWSUM":
+        tile_size = rows * cols
+        lines.append(f"// TROWSUM: reduction operation")
+        lines.append(f"ReduceSum({instr.dst}, {instr.operands[0]}, {tile_size});")
+        
+    elif instr.opcode == "TMATMUL":
+        lines.append(f"// TMATMUL: {instr.dst} = {instr.operands[0]} @ {instr.operands[1]}")
+        lines.append(f"Matmul({instr.dst}, {instr.operands[0]}, {instr.operands[1]}, {rows}, {cols});")
+        
+    else:
+        lines.append(f"// {instr.opcode}: Not implemented")
+    
+    return lines
 
 
 def _gen_ascend_single_op(instr, tile_info):
@@ -1928,9 +2355,19 @@ class MultiBackendCodeGenerator:
             c_type = ARM64_TYPE_MAP.get(memref_type.element_type.value, "float")
             memref_params.append(f"{c_type}* {name}")
         
+        # Declare scalar variables as function parameters (for dynamic bounds)
+        scalar_params = []
+        for name, scalar_type in program.scalar_declarations.items():
+            # Skip internal loop variables (scalar_type is ElementType directly)
+            if scalar_type in (ElementType.U1, ElementType.INDEX):
+                continue
+            c_type = ARM64_TYPE_MAP.get(scalar_type.value, "int")
+            scalar_params.append(f"{c_type} {name}")
+        
         # Generate function signature
-        if memref_params:
-            func_params = ", ".join(memref_params)
+        all_params = memref_params + scalar_params
+        if all_params:
+            func_params = ", ".join(all_params)
             lines.append(f"void {program.name}({func_params}) {{")
         else:
             lines.append(f"void {program.name}(void) {{")
@@ -1947,23 +2384,41 @@ class MultiBackendCodeGenerator:
             lines.append(f"    // Loop fusion: {optimizer.stats['fusion_savings']} loop overheads saved\n")
             
             fused_codegen = FusedCodeGenerator()
+            indent_level = 1  # Base indentation level inside function
+            
             for item in fused_result:
+                indent = "    " * indent_level
+                
                 if isinstance(item, FusedLoop):
                     # Indent the fused loop code
                     fused_lines = fused_codegen.generate_fused_loop(item)
                     for fused_line in fused_lines:
-                        lines.append(f"    {fused_line}" if fused_line else "")
+                        lines.append(f"{indent}{fused_line}" if fused_line else "")
                     lines.append("")
                 elif isinstance(item, FusionBarrier):
                     instr = item.raw_instr
-                    info = tile_info.get(instr.dst)
+                    info = tile_info.get(instr.dst) if instr.dst else None
                     rows = info.rows if info else 8
                     cols = info.cols if info else 8
                     dtype = info.dtype if info else "f32"
-                    # Indent the barrier code
+                    
+                    # Handle indentation changes for control flow
+                    if instr.opcode in ("ENDFOR", "ENDIF"):
+                        indent_level = max(1, indent_level - 1)
+                        indent = "    " * indent_level
+                    elif instr.opcode == "ELSE":
+                        # ELSE: decrease then increase
+                        indent = "    " * max(1, indent_level - 1)
+                    
+                    # Generate the barrier code
                     barrier_lines = _gen_arm64_barrier_op(instr, rows, cols, dtype, tile_info)
                     for barrier_line in barrier_lines:
-                        lines.append(f"    {barrier_line}" if barrier_line else "")
+                        lines.append(f"{indent}{barrier_line}" if barrier_line else "")
+                    
+                    # Increase indentation after opening control flow
+                    if instr.opcode in ("FOR", "IF", "ELSE"):
+                        indent_level += 1
+                    
                     lines.append("")
         
         lines.append("}")
@@ -1989,9 +2444,18 @@ class MultiBackendCodeGenerator:
             memref_params.append(f"{c_type}* {name}")
             memref_types[name] = c_type
         
+        # Collect scalar parameters (scalar_type is ElementType directly)
+        scalar_params = []
+        for name, scalar_type in program.scalar_declarations.items():
+            if scalar_type in (ElementType.U1, ElementType.INDEX):
+                continue
+            c_type = CUDA_TYPE_MAP.get(scalar_type.value, "int")
+            scalar_params.append(f"{c_type} {name}")
+        
         # Generate kernel signature with memory reference parameters
-        if memref_params:
-            kernel_params = ", ".join(memref_params)
+        all_params = memref_params + scalar_params
+        if all_params:
+            kernel_params = ", ".join(all_params)
             lines.append(f"__global__ void {program.name}_kernel({kernel_params}) {{")
         else:
             lines.append(f"__global__ void {program.name}_kernel() {{")
@@ -2003,24 +2467,51 @@ class MultiBackendCodeGenerator:
             fused_result = optimizer.optimize(mock_instructions)
             lines.append(f"    // Loop fusion: {optimizer.stats['fusion_savings']} loop overheads saved\n")
             
+            indent_level = 1
             for item in fused_result:
+                indent = "    " * indent_level
+                
                 if isinstance(item, FusedLoop):
                     ops_desc = "; ".join([f"{op.dst}={op.opcode}(...)" for op in item.operations])
-                    lines.append(f"    // FUSED ({len(item.operations)} ops): {ops_desc}")
-                    lines.append(f"    if (_row < {item.shape.rows} && _col < {item.shape.cols}) {{")
+                    lines.append(f"{indent}// FUSED ({len(item.operations)} ops): {ops_desc}")
+                    lines.append(f"{indent}if (_row < {item.shape.rows} && _col < {item.shape.cols}) {{")
                     for op in item.operations:
-                        lines.append(f"        {_gen_cuda_single_op(op, tile_info)}")
-                    lines.append("    }\n")
+                        lines.append(f"{indent}    {_gen_cuda_single_op(op, tile_info)}")
+                    lines.append(f"{indent}}}\n")
                 elif isinstance(item, FusionBarrier):
                     instr = item.raw_instr
-                    lines.append(f"    // BARRIER: {instr.opcode}\n")
+                    info = tile_info.get(instr.dst) if instr.dst else None
+                    rows = info.rows if info else 8
+                    cols = info.cols if info else 8
+                    dtype = info.dtype if info else "f32"
+                    
+                    # Handle indentation changes for control flow
+                    if instr.opcode in ("ENDFOR", "ENDIF"):
+                        indent_level = max(1, indent_level - 1)
+                        indent = "    " * indent_level
+                    elif instr.opcode == "ELSE":
+                        indent = "    " * max(1, indent_level - 1)
+                    
+                    # Generate the barrier code
+                    barrier_lines = _gen_cuda_barrier_op(instr, rows, cols, dtype, tile_info)
+                    for barrier_line in barrier_lines:
+                        lines.append(f"{indent}{barrier_line}" if barrier_line else "")
+                    
+                    # Increase indentation after opening control flow
+                    if instr.opcode in ("FOR", "IF", "ELSE"):
+                        indent_level += 1
+                    
+                    lines.append("")
         
         lines.append("}\n")
         
         # Generate host wrapper function with memory reference parameters
-        if memref_params:
-            wrapper_params = ", ".join(memref_params)
-            kernel_args = ", ".join(program.memref_declarations.keys())
+        all_wrapper_params = memref_params + scalar_params
+        if all_wrapper_params:
+            wrapper_params = ", ".join(all_wrapper_params)
+            kernel_args = ", ".join(list(program.memref_declarations.keys()) + 
+                                    [n for n, t in program.scalar_declarations.items() 
+                                     if t not in (ElementType.U1, ElementType.INDEX)])
             lines.append(f"void {program.name}({wrapper_params}) {{")
             lines.append("    dim3 block(8, 8);")
             lines.append("    dim3 grid(1, 1);")
@@ -2068,15 +2559,40 @@ class MultiBackendCodeGenerator:
             fused_result = optimizer.optimize(mock_instructions)
             lines.append(f"        // Loop fusion: {optimizer.stats['fusion_savings']} loop overheads saved\n")
             
+            indent_level = 2  # Base indentation inside Compute()
             for item in fused_result:
+                indent = "    " * indent_level
+                
                 if isinstance(item, FusedLoop):
                     ops_desc = "; ".join([op.opcode for op in item.operations])
-                    lines.append(f"        // FUSED ({len(item.operations)} ops): {ops_desc}")
+                    lines.append(f"{indent}// FUSED ({len(item.operations)} ops): {ops_desc}")
                     for op in item.operations:
-                        lines.append(f"        {_gen_ascend_single_op(op, tile_info)}")
+                        lines.append(f"{indent}{_gen_ascend_single_op(op, tile_info)}")
                     lines.append("")
                 elif isinstance(item, FusionBarrier):
-                    lines.append(f"        // BARRIER: {item.raw_instr.opcode}\n")
+                    instr = item.raw_instr
+                    info = tile_info.get(instr.dst) if instr.dst else None
+                    rows = info.rows if info else 8
+                    cols = info.cols if info else 8
+                    dtype = info.dtype if info else "f32"
+                    
+                    # Handle indentation changes for control flow
+                    if instr.opcode in ("ENDFOR", "ENDIF"):
+                        indent_level = max(2, indent_level - 1)
+                        indent = "    " * indent_level
+                    elif instr.opcode == "ELSE":
+                        indent = "    " * max(2, indent_level - 1)
+                    
+                    # Generate the barrier code
+                    barrier_lines = _gen_ascend_barrier_op(instr, rows, cols, dtype, tile_info)
+                    for barrier_line in barrier_lines:
+                        lines.append(f"{indent}{barrier_line}" if barrier_line else "")
+                    
+                    # Increase indentation after opening control flow
+                    if instr.opcode in ("FOR", "IF", "ELSE"):
+                        indent_level += 1
+                    
+                    lines.append("")
         
         lines.append("        outQueueY.EnQue(yLocal);")
         lines.append("        inQueueX.FreeTensor(xLocal);")

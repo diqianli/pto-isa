@@ -35,9 +35,10 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, self, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

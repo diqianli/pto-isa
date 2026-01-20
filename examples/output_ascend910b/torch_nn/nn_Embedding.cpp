@@ -38,7 +38,8 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: result = indices_onehot @ weight
+        Matmul(result, indices_onehot, weight, 8, 8);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

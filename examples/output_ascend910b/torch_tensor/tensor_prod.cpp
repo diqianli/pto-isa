@@ -36,9 +36,10 @@ private:
         // TLOAD: Operation
         Ln(log_self, self, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, log_self, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (2 ops): TEXP; TSTORE
         Exp(result, total, 64);

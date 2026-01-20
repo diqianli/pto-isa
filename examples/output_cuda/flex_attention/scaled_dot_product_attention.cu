@@ -37,32 +37,48 @@ __global__ void scaled_dot_product_attention_kernel(float* Q_mem, float* K_mem, 
         V[_row][_col] = V_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: scores = Q @ K
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += Q[_row][_k] * K[_k][_col];
+        scores[_row][_col] = _sum;}
 
     // FUSED (1 ops): scaled_scores=TMULS(...)
     if (_row < 8 && _col < 8) {
         scaled_scores[_row][_col] = scores[_row][_col] * 0.35355339059327373f;
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_max = rowsum(scaled_scores)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += scaled_scores[_row][_c];
+        row_max[_row][0] = _sum;}
 
     // FUSED (1 ops): row_max=TDIVS(...)
     if (_row < 8 && _col < 1) {
         row_max[_row][_col] = row_max[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): exp_scores=TEXP(...)
     if (_row < 8 && _col < 8) {
         exp_scores[_row][_col] = __expf(shifted[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(exp_scores)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_scores[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TROWEXPANDDIV
+    // TROWEXPANDDIV: Not implemented
 
-    // BARRIER: TMATMUL
+    // TMATMUL: output = attention_weights @ V
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += attention_weights[_row][_k] * V[_k][_col];
+        output[_row][_col] = _sum;}
 
     // FUSED (1 ops): output_mem=TSTORE(...)
     if (_row < 8 && _col < 8) {

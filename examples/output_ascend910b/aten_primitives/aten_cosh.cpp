@@ -30,23 +30,39 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 13 loop overheads saved
+        // Loop fusion: 12 loop overheads saved
 
-        // FUSED (14 ops): TLOAD; TEXP; TNEG; TEXP; TADD; TDIVS; TSTORE; TLOAD; TEXP; TNEG; TEXP; TADD; TDIVS; TSTORE
-        // TLOAD: Operation
-        Exp(exp_x, x, 64);
-        Neg(neg_x, x, 64);
-        Exp(exp_neg_x, neg_x, 64);
-        Add(sum, exp_x, exp_neg_x, 64);
-        Divs(result, sum, 2.0f, 64);
-        // TSTORE: Operation
-        // TLOAD: Operation
-        Exp(exp_x, x, 64);
-        Neg(neg_x, x, 64);
-        Exp(exp_neg_x, neg_x, 64);
-        Add(sum, exp_x, exp_neg_x, 64);
-        Divs(result, sum, 2.0f, 64);
-        // TSTORE: Operation
+        int tile_size = 4096;
+
+        int zero = 0;
+
+        for (int tile_idx = 0; tile_idx < num_full_tiles; tile_idx += 1) {
+
+            // FUSED (7 ops): TLOAD; TEXP; TNEG; TEXP; TADD; TDIVS; TSTORE
+            // TLOAD: Operation
+            Exp(exp_x, x, 64);
+            Neg(neg_x, x, 64);
+            Exp(exp_neg_x, neg_x, 64);
+            Add(sum, exp_x, exp_neg_x, 64);
+            Divs(result, sum, 2.0f, 64);
+            // TSTORE: Operation
+
+        }
+
+        int has_tail = (tail_elements > zero) ? 1 : 0;
+
+        if (has_tail) {
+
+            // FUSED (7 ops): TLOAD; TEXP; TNEG; TEXP; TADD; TDIVS; TSTORE
+            // TLOAD: Operation
+            Exp(exp_x, x, 64);
+            Neg(neg_x, x, 64);
+            Exp(exp_neg_x, neg_x, 64);
+            Add(sum, exp_x, exp_neg_x, 64);
+            Divs(result, sum, 2.0f, 64);
+            // TSTORE: Operation
+
+        }
 
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);

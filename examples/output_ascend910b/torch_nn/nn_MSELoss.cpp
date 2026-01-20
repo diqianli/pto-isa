@@ -38,9 +38,10 @@ private:
         Sub(diff, pred, target, 64);
         Mul(squared, diff, diff, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, squared, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, total_sum, 64.0f, 64);

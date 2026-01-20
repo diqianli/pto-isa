@@ -37,26 +37,30 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: scores = Q @ K
+        Matmul(scores, Q, K, 8, 8);
 
         // FUSED (1 ops): TMULS
         Muls(scaled_scores, scores, 0.35355339059327373f, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_max, scaled_scores, 8);
 
         // FUSED (1 ops): TDIVS
         Divs(row_max, row_max, 8.0f, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (1 ops): TEXP
         Exp(exp_scores, shifted, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, exp_scores, 8);
 
-        // BARRIER: TROWEXPANDDIV
+        // TROWEXPANDDIV: Not implemented
 
-        // BARRIER: TMATMUL
+        // TMATMUL: output = attention_weights @ V
+        Matmul(output, attention_weights, V, 8, 8);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

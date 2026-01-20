@@ -35,9 +35,10 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, self, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (1 ops): TDIVS
         Divs(total, total, 64.0f, 64);
@@ -47,9 +48,10 @@ private:
         Sub(centered, self, mean_val, 64);
         Mul(sq_centered, centered, centered, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(sq_row_sum, sq_centered, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (3 ops): TDIVS; TSQRT; TSTORE
         Divs(var, var_total, 64.0f, 64);

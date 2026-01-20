@@ -27,7 +27,11 @@ __global__ void tensor_mm_kernel(float* input_self, float* input_mat2, float* ou
         mat2[_row][_col] = input_mat2[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: result = self @ mat2
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += self[_row][_k] * mat2[_k][_col];
+        result[_row][_col] = _sum;}
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

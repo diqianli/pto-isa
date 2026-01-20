@@ -31,7 +31,11 @@ __global__ void nn_RMSNorm_kernel(float* input, float* output) {
         x_squared[_row][_col] = x[_row][_col] * x[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: mean_sq_sum = rowsum(x_squared)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x_squared[_row][_c];
+        mean_sq_sum[_row][0] = _sum;}
 
     // FUSED (3 ops): mean_sq=TDIVS(...); mean_sq_eps=TADDS(...); rms=TSQRT(...)
     if (_row < 8 && _col < 1) {

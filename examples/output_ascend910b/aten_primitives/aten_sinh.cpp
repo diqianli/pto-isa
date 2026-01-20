@@ -30,43 +30,59 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 33 loop overheads saved
+        // Loop fusion: 32 loop overheads saved
 
-        // FUSED (34 ops): TLOAD; TMULS; TMUL; TMULS; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TSTORE; TLOAD; TMULS; TMUL; TMULS; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TSTORE
-        // TLOAD: Operation
-        Muls(result, x, 1.0f, 64);
-        Mul(x_squared, x, x, 64);
-        Muls(term, x, 1.0f, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 6.0f, 64);
-        Add(result, result, term, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 20.0f, 64);
-        Add(result, result, term, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 42.0f, 64);
-        Add(result, result, term, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 72.0f, 64);
-        Add(result, result, term, 64);
-        // TSTORE: Operation
-        // TLOAD: Operation
-        Muls(result, x, 1.0f, 64);
-        Mul(x_squared, x, x, 64);
-        Muls(term, x, 1.0f, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 6.0f, 64);
-        Add(result, result, term, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 20.0f, 64);
-        Add(result, result, term, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 42.0f, 64);
-        Add(result, result, term, 64);
-        Mul(term, term, x_squared, 64);
-        Divs(term, term, 72.0f, 64);
-        Add(result, result, term, 64);
-        // TSTORE: Operation
+        int tile_size = 4096;
+
+        int zero = 0;
+
+        for (int tile_idx = 0; tile_idx < num_full_tiles; tile_idx += 1) {
+
+            // FUSED (17 ops): TLOAD; TMULS; TMUL; TMULS; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TSTORE
+            // TLOAD: Operation
+            Muls(result, x, 1.0f, 64);
+            Mul(x_squared, x, x, 64);
+            Muls(term, x, 1.0f, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 6.0f, 64);
+            Add(result, result, term, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 20.0f, 64);
+            Add(result, result, term, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 42.0f, 64);
+            Add(result, result, term, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 72.0f, 64);
+            Add(result, result, term, 64);
+            // TSTORE: Operation
+
+        }
+
+        int has_tail = (tail_elements > zero) ? 1 : 0;
+
+        if (has_tail) {
+
+            // FUSED (17 ops): TLOAD; TMULS; TMUL; TMULS; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TMUL; TDIVS; TADD; TSTORE
+            // TLOAD: Operation
+            Muls(result, x, 1.0f, 64);
+            Mul(x_squared, x, x, 64);
+            Muls(term, x, 1.0f, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 6.0f, 64);
+            Add(result, result, term, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 20.0f, 64);
+            Add(result, result, term, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 42.0f, 64);
+            Add(result, result, term, 64);
+            Mul(term, term, x_squared, 64);
+            Divs(term, term, 72.0f, 64);
+            Add(result, result, term, 64);
+            // TSTORE: Operation
+
+        }
 
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);

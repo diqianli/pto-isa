@@ -28,7 +28,11 @@ __global__ void nn_Softmax_kernel(float* input, float* output) {
         exp_x[_row][_col] = __expf(x[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: sum_exp = rowsum(exp_x)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_x[_row][_c];
+        sum_exp[_row][0] = _sum;}
 
     // FUSED (2 ops): result=TDIV(...); output=TSTORE(...)
     if (_row < 8 && _col < 8) {

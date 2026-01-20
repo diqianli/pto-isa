@@ -30,28 +30,36 @@ __global__ void F_log_softmax_kernel(float* input, float* output) {
         x[_row][_col] = input[_row * 8 + _col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_mean = rowsum(x)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x[_row][_c];
+        row_mean[_row][0] = _sum;}
 
     // FUSED (1 ops): row_mean=TDIVS(...)
     if (_row < 8 && _col < 1) {
         row_mean[_row][_col] = row_mean[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): exp_x=TEXP(...)
     if (_row < 8 && _col < 8) {
         exp_x[_row][_col] = __expf(x_shifted[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(exp_x)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_x[_row][_c];
+        row_sum[_row][0] = _sum;}
 
     // FUSED (1 ops): log_sum=TLOG(...)
     if (_row < 8 && _col < 1) {
         log_sum[_row][_col] = __logf(row_sum[_row][_col]);
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

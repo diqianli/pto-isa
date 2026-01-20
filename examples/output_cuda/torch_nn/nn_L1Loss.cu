@@ -33,9 +33,13 @@ __global__ void nn_L1Loss_kernel(float* pred_mem, float* target_mem, float* outp
         abs_diff[_row][_col] = fabsf(diff[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(abs_diff)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += abs_diff[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

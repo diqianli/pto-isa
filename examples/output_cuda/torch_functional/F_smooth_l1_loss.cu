@@ -41,9 +41,13 @@ __global__ void F_smooth_l1_loss_kernel(float* input, float* target_mem, float* 
         loss[_row][_col] = fminf(l2_part[_row][_col], l1_part[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(loss)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += loss[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

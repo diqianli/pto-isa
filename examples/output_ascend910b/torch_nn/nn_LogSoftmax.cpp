@@ -36,12 +36,13 @@ private:
         // TLOAD: Operation
         Exp(exp_x, x, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(sum_exp, exp_x, 8);
 
         // FUSED (1 ops): TLOG
         Ln(log_sum, sum_exp, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

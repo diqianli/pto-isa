@@ -35,19 +35,21 @@ private:
         // FUSED (1 ops): TLOAD
         // TLOAD: Operation
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_max, x, 8);
 
         // FUSED (1 ops): TDIVS
         Divs(row_max, row_max, 8.0f, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (1 ops): TEXP
         Exp(exp_x, x_shifted, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, exp_x, 8);
 
-        // BARRIER: TROWEXPANDDIV
+        // TROWEXPANDDIV: Not implemented
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

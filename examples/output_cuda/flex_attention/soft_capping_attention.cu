@@ -42,7 +42,11 @@ __global__ void soft_capping_attention_kernel(float* Q_mem, float* K_mem, float*
         V[_row][_col] = V_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: scores = Q @ K
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += Q[_row][_k] * K[_k][_col];
+        scores[_row][_col] = _sum;}
 
     // FUSED (8 ops): scaled=TMULS(...); x_div_cap=TDIVS(...); two_x=TMULS(...); exp_2x=TEXP(...); exp_minus_1=TADDS(...); exp_plus_1=TADDS(...); tanh_x=TDIV(...); capped_scores=TMULS(...)
     if (_row < 8 && _col < 8) {
@@ -56,25 +60,37 @@ __global__ void soft_capping_attention_kernel(float* Q_mem, float* K_mem, float*
         capped_scores[_row][_col] = tanh_x[_row][_col] * 50.0f;
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(capped_scores)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += capped_scores[_row][_c];
+        row_sum[_row][0] = _sum;}
 
     // FUSED (1 ops): row_sum=TDIVS(...)
     if (_row < 8 && _col < 1) {
         row_sum[_row][_col] = row_sum[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): exp_scores=TEXP(...)
     if (_row < 8 && _col < 8) {
         exp_scores[_row][_col] = __expf(shifted[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(exp_scores)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_scores[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TROWEXPANDDIV
+    // TROWEXPANDDIV: Not implemented
 
-    // BARRIER: TMATMUL
+    // TMATMUL: output = attn @ V
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += attn[_row][_k] * V[_k][_col];
+        output[_row][_col] = _sum;}
 
     // FUSED (1 ops): output_mem=TSTORE(...)
     if (_row < 8 && _col < 8) {

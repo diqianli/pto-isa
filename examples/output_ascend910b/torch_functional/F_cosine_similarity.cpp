@@ -37,15 +37,18 @@ private:
         // TLOAD: Operation
         Mul(dot_prod, x1, x2, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(dot_sum, dot_prod, 8);
 
         // FUSED (2 ops): TMUL; TMUL
         Mul(x1_sq, x1, x1, 64);
         Mul(x2_sq, x2, x2, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(x1_norm_sq, x1_sq, 8);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(x2_norm_sq, x2_sq, 8);
 
         // FUSED (6 ops): TSQRT; TSQRT; TMUL; TADDS; TDIV; TSTORE
         Sqrt(x1_norm, x1_norm_sq, 64);

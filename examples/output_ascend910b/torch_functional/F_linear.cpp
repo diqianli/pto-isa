@@ -36,7 +36,8 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: output = x @ weight
+        Matmul(output, x, weight, 8, 8);
 
         // FUSED (3 ops): TLOAD; TADD; TSTORE
         // TLOAD: Operation

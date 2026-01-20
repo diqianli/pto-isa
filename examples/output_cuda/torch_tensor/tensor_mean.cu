@@ -27,9 +27,13 @@ __global__ void tensor_mean_kernel(float* input, float* output) {
         self[_row][_col] = input[_row * 8 + _col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(self)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += self[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

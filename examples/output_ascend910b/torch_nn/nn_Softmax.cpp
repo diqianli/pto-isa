@@ -36,7 +36,8 @@ private:
         // TLOAD: Operation
         Exp(exp_x, x, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(sum_exp, exp_x, 8);
 
         // FUSED (2 ops): TDIV; TSTORE
         Div(result, exp_x, sum_exp, 64);

@@ -30,21 +30,37 @@ private:
         LocalTensor<float> xLocal = inQueueX.DeQue<float>();
         LocalTensor<float> yLocal = outQueueY.AllocTensor<float>();
 
-        // Loop fusion: 11 loop overheads saved
+        // Loop fusion: 10 loop overheads saved
 
-        // FUSED (12 ops): TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE; TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE
-        // TLOAD: Operation
-        // TLOAD: Operation
-        Ln(log_base, base, 64);
-        Mul(product, exp_tile, log_base, 64);
-        Exp(result, product, 64);
-        // TSTORE: Operation
-        // TLOAD: Operation
-        // TLOAD: Operation
-        Ln(log_base, base, 64);
-        Mul(product, exp_tile, log_base, 64);
-        Exp(result, product, 64);
-        // TSTORE: Operation
+        int tile_size = 4096;
+
+        int zero = 0;
+
+        for (int tile_idx = 0; tile_idx < num_full_tiles; tile_idx += 1) {
+
+            // FUSED (6 ops): TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE
+            // TLOAD: Operation
+            // TLOAD: Operation
+            Ln(log_base, base, 64);
+            Mul(product, exp_tile, log_base, 64);
+            Exp(result, product, 64);
+            // TSTORE: Operation
+
+        }
+
+        int has_tail = (tail_elements > zero) ? 1 : 0;
+
+        if (has_tail) {
+
+            // FUSED (6 ops): TLOAD; TLOAD; TLOG; TMUL; TEXP; TSTORE
+            // TLOAD: Operation
+            // TLOAD: Operation
+            Ln(log_base, base, 64);
+            Mul(product, exp_tile, log_base, 64);
+            Exp(result, product, 64);
+            // TSTORE: Operation
+
+        }
 
         outQueueY.EnQue(yLocal);
         inQueueX.FreeTensor(xLocal);

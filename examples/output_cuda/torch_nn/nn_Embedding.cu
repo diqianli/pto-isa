@@ -31,7 +31,11 @@ __global__ void nn_Embedding_kernel(float* indices_mem, float* weight_mem, float
         weight[_row][_col] = weight_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: result = indices_onehot @ weight
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 64; _k++) _sum += indices_onehot[_row][_k] * weight[_k][_col];
+        result[_row][_col] = _sum;}
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

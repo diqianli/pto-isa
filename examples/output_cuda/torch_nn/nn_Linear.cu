@@ -30,7 +30,11 @@ __global__ void nn_Linear_kernel(float* input, float* weight_mem, float* bias_me
         bias[_row][_col] = bias_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: mm_result = x @ weight
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += x[_row][_k] * weight[_k][_col];
+        mm_result[_row][_col] = _sum;}
 
     // FUSED (2 ops): result=TADD(...); output=TSTORE(...)
     if (_row < 8 && _col < 8) {

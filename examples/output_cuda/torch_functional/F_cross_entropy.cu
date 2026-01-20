@@ -35,28 +35,36 @@ __global__ void F_cross_entropy_kernel(float* input, float* target_mem, float* o
         target[_row][_col] = target_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_mean = rowsum(logits)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += logits[_row][_c];
+        row_mean[_row][0] = _sum;}
 
     // FUSED (1 ops): row_mean=TDIVS(...)
     if (_row < 8 && _col < 1) {
         row_mean[_row][_col] = row_mean[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): exp_shifted=TEXP(...)
     if (_row < 8 && _col < 8) {
         exp_shifted[_row][_col] = __expf(shifted[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(exp_shifted)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_shifted[_row][_c];
+        row_sum[_row][0] = _sum;}
 
     // FUSED (1 ops): log_sum=TLOG(...)
     if (_row < 8 && _col < 1) {
         log_sum[_row][_col] = __logf(row_sum[_row][_col]);
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (2 ops): ce=TMUL(...); ce=TNEG(...)
     if (_row < 8 && _col < 8) {
@@ -64,9 +72,13 @@ __global__ void F_cross_entropy_kernel(float* input, float* target_mem, float* o
         ce[_row][_col] = -ce[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: ce_row = rowsum(ce)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += ce[_row][_c];
+        ce_row[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

@@ -37,9 +37,10 @@ private:
         // TLOAD: Operation
         Mul(weighted, target, log_probs, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, weighted, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (3 ops): TNEG; TDIVS; TSTORE
         Neg(result, result, 64);

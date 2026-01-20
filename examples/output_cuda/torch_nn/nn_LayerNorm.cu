@@ -33,21 +33,29 @@ __global__ void nn_LayerNorm_kernel(float* input, float* output) {
         x[_row][_col] = input[_row * 8 + _col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(x)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x[_row][_c];
+        row_sum[_row][0] = _sum;}
 
     // FUSED (1 ops): mean=TDIVS(...)
     if (_row < 8 && _col < 1) {
         mean[_row][_col] = row_sum[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): squared=TMUL(...)
     if (_row < 8 && _col < 8) {
         squared[_row][_col] = x_minus_mean[_row][_col] * x_minus_mean[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: var_sum = rowsum(squared)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += squared[_row][_c];
+        var_sum[_row][0] = _sum;}
 
     // FUSED (3 ops): variance=TDIVS(...); var_eps=TADDS(...); std=TSQRT(...)
     if (_row < 8 && _col < 1) {
@@ -56,7 +64,7 @@ __global__ void nn_LayerNorm_kernel(float* input, float* output) {
         std[_row][_col] = __fsqrt_rn(var_eps[_row][_col]);
     }
 
-    // BARRIER: TROWEXPANDDIV
+    // TROWEXPANDDIV: Not implemented
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {

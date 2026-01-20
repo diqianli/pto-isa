@@ -31,7 +31,11 @@ __global__ void tensor_mv_kernel(float* input_self, float* input_vec, float* out
         vec[_row][_col] = input_vec[_row * 1 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: result = self @ vec
+    if (_row < 8 && _col < 1) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += self[_row][_k] * vec[_k][_col];
+        result[_row][_col] = _sum;}
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 1) {

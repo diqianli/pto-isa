@@ -36,30 +36,33 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_mean, logits, 8);
 
         // FUSED (1 ops): TDIVS
         Divs(row_mean, row_mean, 8.0f, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (1 ops): TEXP
         Exp(exp_shifted, shifted, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, exp_shifted, 8);
 
         // FUSED (1 ops): TLOG
         Ln(log_sum, row_sum, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (2 ops): TMUL; TNEG
         Mul(ce, target, log_softmax, 64);
         Neg(ce, ce, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(ce_row, ce, 8);
 
-        // BARRIER: TCOLSUM
+        // TCOLSUM: Not implemented
 
         // FUSED (2 ops): TDIVS; TSTORE
         Divs(result, result, 8.0f, 64);

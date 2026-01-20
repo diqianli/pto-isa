@@ -37,11 +37,23 @@ __global__ void linear_projection_qkv_kernel(float* X_mem, float* WQ_mem, float*
         W_V[_row][_col] = WV_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: Q = X @ W_Q
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 64; _k++) _sum += X[_row][_k] * W_Q[_k][_col];
+        Q[_row][_col] = _sum;}
 
-    // BARRIER: TMATMUL
+    // TMATMUL: K = X @ W_K
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 64; _k++) _sum += X[_row][_k] * W_K[_k][_col];
+        K[_row][_col] = _sum;}
 
-    // BARRIER: TMATMUL
+    // TMATMUL: V = X @ W_V
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 64; _k++) _sum += X[_row][_k] * W_V[_k][_col];
+        V[_row][_col] = _sum;}
 
     // FUSED (3 ops): Q_mem=TSTORE(...); K_mem=TSTORE(...); V_mem=TSTORE(...)
     if (_row < 8 && _col < 8) {

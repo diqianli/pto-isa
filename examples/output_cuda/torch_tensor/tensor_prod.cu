@@ -29,9 +29,13 @@ __global__ void tensor_prod_kernel(float* input, float* output) {
         log_self[_row][_col] = __logf(self[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(log_self)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += log_self[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TEXP(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

@@ -35,7 +35,7 @@ __global__ void F_batch_norm_kernel(float* input, float* mean_mem, float* var_me
         var[_row][_col] = var_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): var=TADDS(...); std=TSQRT(...)
     if (_row < 1 && _col < 8) {

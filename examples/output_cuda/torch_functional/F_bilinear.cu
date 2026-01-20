@@ -30,7 +30,11 @@ __global__ void F_bilinear_kernel(float* input1, float* input2, float* weight_me
         weight[_row][_col] = weight_mem[_row * 8 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: temp = x1 @ weight
+    if (_row < 8 && _col < 8) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += x1[_row][_k] * weight[_k][_col];
+        temp[_row][_col] = _sum;}
 
     // FUSED (2 ops): output=TMUL(...); output_mem=TSTORE(...)
     if (_row < 8 && _col < 8) {

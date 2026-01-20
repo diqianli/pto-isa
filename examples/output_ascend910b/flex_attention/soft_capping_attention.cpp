@@ -37,7 +37,8 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: scores = Q @ K
+        Matmul(scores, Q, K, 8, 8);
 
         // FUSED (8 ops): TMULS; TDIVS; TMULS; TEXP; TADDS; TADDS; TDIV; TMULS
         Muls(scaled, scores, 0.35355339059327373f, 64);
@@ -49,21 +50,24 @@ private:
         Div(tanh_x, exp_minus_1, exp_plus_1, 64);
         Muls(capped_scores, tanh_x, 50.0f, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, capped_scores, 8);
 
         // FUSED (1 ops): TDIVS
         Divs(row_sum, row_sum, 8.0f, 64);
 
-        // BARRIER: TROWEXPANDSUB
+        // TROWEXPANDSUB: Not implemented
 
         // FUSED (1 ops): TEXP
         Exp(exp_scores, shifted, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, exp_scores, 8);
 
-        // BARRIER: TROWEXPANDDIV
+        // TROWEXPANDDIV: Not implemented
 
-        // BARRIER: TMATMUL
+        // TMATMUL: output = attn @ V
+        Matmul(output, attn, V, 8, 8);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

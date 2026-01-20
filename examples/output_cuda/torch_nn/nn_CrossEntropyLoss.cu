@@ -36,14 +36,18 @@ __global__ void nn_CrossEntropyLoss_kernel(float* pred_mem, float* target_mem, f
         exp_pred[_row][_col] = __expf(pred[_row][_col]);
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: sum_exp = rowsum(exp_pred)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += exp_pred[_row][_c];
+        sum_exp[_row][0] = _sum;}
 
     // FUSED (1 ops): log_sum=TLOG(...)
     if (_row < 8 && _col < 1) {
         log_sum[_row][_col] = __logf(sum_exp[_row][_col]);
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (2 ops): weighted=TMUL(...); neg_weighted=TNEG(...)
     if (_row < 8 && _col < 8) {
@@ -51,9 +55,13 @@ __global__ void nn_CrossEntropyLoss_kernel(float* pred_mem, float* target_mem, f
         neg_weighted[_row][_col] = -weighted[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: row_sum = rowsum(neg_weighted)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += neg_weighted[_row][_c];
+        row_sum[_row][0] = _sum;}
 
-    // BARRIER: TCOLSUM
+    // TCOLSUM: Not implemented
 
     // FUSED (2 ops): result=TDIVS(...); output=TSTORE(...)
     if (_row < 1 && _col < 1) {

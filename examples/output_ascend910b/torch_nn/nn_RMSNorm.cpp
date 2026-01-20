@@ -36,7 +36,8 @@ private:
         // TLOAD: Operation
         Mul(x_squared, x, x, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(mean_sq_sum, x_squared, 8);
 
         // FUSED (3 ops): TDIVS; TADDS; TSQRT
         Divs(mean_sq, mean_sq_sum, 8.0f, 64);

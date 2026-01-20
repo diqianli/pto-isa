@@ -31,7 +31,11 @@ __global__ void output_projection_kernel(float* attn_mem, float* WO_mem, float* 
         W_O[_row][_col] = WO_mem[_row * 64 + _col];
     }
 
-    // BARRIER: TMATMUL
+    // TMATMUL: output = attn_out @ W_O
+    if (_row < 8 && _col < 64) {
+        float _sum = 0.0f;
+        for (int _k = 0; _k < 8; _k++) _sum += attn_out[_row][_k] * W_O[_k][_col];
+        output[_row][_col] = _sum;}
 
     // FUSED (1 ops): output_mem=TSTORE(...)
     if (_row < 8 && _col < 64) {

@@ -38,7 +38,8 @@ private:
         // TLOAD: Operation
         Mul(product, x1, x2, 64);
 
-        // BARRIER: TMATMUL
+        // TMATMUL: result = product @ weight
+        Matmul(result, product, weight, 8, 8);
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

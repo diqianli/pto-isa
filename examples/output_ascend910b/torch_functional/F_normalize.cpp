@@ -36,13 +36,14 @@ private:
         // TLOAD: Operation
         Mul(x_sq, x, x, 64);
 
-        // BARRIER: TROWSUM
+        // TROWSUM: reduction operation
+        ReduceSum(row_sum, x_sq, 8);
 
         // FUSED (2 ops): TSQRT; TADDS
         Sqrt(norm, row_sum, 64);
         Adds(norm, norm, 1e-12f, 64);
 
-        // BARRIER: TROWEXPANDDIV
+        // TROWEXPANDDIV: Not implemented
 
         // FUSED (1 ops): TSTORE
         // TSTORE: Operation

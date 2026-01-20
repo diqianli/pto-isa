@@ -40,11 +40,14 @@ private:
         // TLOAD: Operation
         // TLOAD: Operation
 
-        // BARRIER: TMATMUL
+        // TMATMUL: Q = X @ W_Q
+        Matmul(Q, X, W_Q, 8, 8);
 
-        // BARRIER: TMATMUL
+        // TMATMUL: K = X @ W_K
+        Matmul(K, X, W_K, 8, 8);
 
-        // BARRIER: TMATMUL
+        // TMATMUL: V = X @ W_V
+        Matmul(V, X, W_V, 8, 8);
 
         // FUSED (3 ops): TSTORE; TSTORE; TSTORE
         // TSTORE: Operation

@@ -30,21 +30,29 @@ __global__ void F_layer_norm_kernel(float* input, float* output) {
         x[_row][_col] = input[_row * 8 + _col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: mean = rowsum(x)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += x[_row][_c];
+        mean[_row][0] = _sum;}
 
     // FUSED (1 ops): mean=TDIVS(...)
     if (_row < 8 && _col < 1) {
         mean[_row][_col] = mean[_row][_col] / 8.0f;
     }
 
-    // BARRIER: TROWEXPANDSUB
+    // TROWEXPANDSUB: Not implemented
 
     // FUSED (1 ops): sq_centered=TMUL(...)
     if (_row < 8 && _col < 8) {
         sq_centered[_row][_col] = centered[_row][_col] * centered[_row][_col];
     }
 
-    // BARRIER: TROWSUM
+    // TROWSUM: var = rowsum(sq_centered)
+    if (_col == 0 && _row < 8) {
+        float _sum = 0.0f;
+        for (int _c = 0; _c < 8; _c++) _sum += sq_centered[_row][_c];
+        var[_row][0] = _sum;}
 
     // FUSED (3 ops): var=TDIVS(...); var=TADDS(...); std=TSQRT(...)
     if (_row < 8 && _col < 1) {
@@ -53,7 +61,7 @@ __global__ void F_layer_norm_kernel(float* input, float* output) {
         std[_row][_col] = __fsqrt_rn(var[_row][_col]);
     }
 
-    // BARRIER: TROWEXPANDDIV
+    // TROWEXPANDDIV: Not implemented
 
     // FUSED (1 ops): output=TSTORE(...)
     if (_row < 8 && _col < 8) {
