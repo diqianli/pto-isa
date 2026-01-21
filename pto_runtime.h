@@ -131,6 +131,7 @@ typedef struct {
     int32_t           num_workers;           // Number of worker threads
     volatile bool     shutdown_requested;    // Signal workers to exit
     volatile bool     execution_started;     // Orchestration has submitted all tasks
+    int32_t           execution_task_threshold;  // Start workers when task_count > threshold
     
     // InCore function registry (maps func_name to actual function pointer)
     // This is populated before execution starts
@@ -238,12 +239,17 @@ void pto_register_incore_func(PTORuntime* rt, const char* func_name, PTOInCoreFu
  * 4. Wait for all tasks to complete
  * 5. Shutdown workers and cleanup
  * 
- * @param orch_func     Orchestration function that builds the task graph
- * @param user_data     User data passed to orchestration function
- * @param num_workers   Number of worker threads (1-PTO_MAX_WORKERS)
+ * @param orch_func               Orchestration function that builds the task graph
+ * @param user_data               User data passed to orchestration function
+ * @param num_workers             Number of worker threads (1-PTO_MAX_WORKERS)
+ * @param execution_task_threshold  Task threshold to start execution:
+ *                                  - 0: Wait until orchestration completes (default, safe)
+ *                                  - >0: Start when active_task_count > threshold OR orchestration done
+ *                                  This enables pipelining task graph building with execution.
  * @return 0 on success, -1 on failure
  */
-int runtime_entry_arm64(PTOOrchFunc orch_func, void* user_data, int num_workers);
+int runtime_entry_arm64(PTOOrchFunc orch_func, void* user_data, int num_workers, 
+                        int execution_task_threshold);
 
 /**
  * Thread-safe version of pto_get_ready_task

@@ -54,6 +54,7 @@ void pto_runtime_init(PTORuntime* rt) {
     rt->num_workers = 0;
     rt->shutdown_requested = false;
     rt->execution_started = false;
+    rt->execution_task_threshold = 0;
     memset(rt->workers, 0, sizeof(rt->workers));
     memset(rt->func_registry, 0, sizeof(rt->func_registry));
     
@@ -218,12 +219,19 @@ int32_t pto_get_ready_task_blocking(PTORuntime* rt) {
     
     pthread_mutex_lock(&rt->queue_mutex);
     
-    DEBUG_PRINT("[Queue] get_blocking: got lock, ready_count=%d, started=%d\n", 
-           rt->ready_count, rt->execution_started);
+    DEBUG_PRINT("[Queue] get_blocking: got lock, ready_count=%d, started=%d, threshold=%d\n", 
+           rt->ready_count, rt->execution_started, rt->execution_task_threshold);
     fflush(stdout);
     
-    // Wait until: (execution started AND task available) OR shutdown OR all done
-    while ((rt->ready_count == 0 || !rt->execution_started) && !rt->shutdown_requested) {
+    // Determine if we can start execution:
+    // - threshold == 0: must wait for execution_started (orchestration complete)
+    // - threshold > 0: can start when active_task_count > threshold OR execution_started
+    bool can_execute = rt->execution_started || 
+                       (rt->execution_task_threshold > 0 && 
+                        rt->total_tasks_scheduled > rt->execution_task_threshold);
+    
+    // Wait until: (can_execute AND task available) OR shutdown OR all done
+    while ((rt->ready_count == 0 || !can_execute) && !rt->shutdown_requested) {
         // Check if all tasks are completed
         if (rt->execution_started && rt->total_tasks_completed >= rt->total_tasks_scheduled) {
             pthread_mutex_unlock(&rt->queue_mutex);
@@ -233,8 +241,8 @@ int32_t pto_get_ready_task_blocking(PTORuntime* rt) {
         // Reduce debug spam - only print occasionally
         static __thread int wait_count = 0;
         if (++wait_count % 1000 == 1) {
-            DEBUG_PRINT("[Queue] get_blocking: waiting (ready=%d, started=%d, shutdown=%d, count=%d)\n", 
-                   rt->ready_count, rt->execution_started, rt->shutdown_requested, wait_count);
+            DEBUG_PRINT("[Queue] get_blocking: waiting (ready=%d, can_exec=%d, shutdown=%d, count=%d)\n", 
+                   rt->ready_count, can_execute, rt->shutdown_requested, wait_count);
             fflush(stdout);
         }
         
@@ -247,6 +255,11 @@ int32_t pto_get_ready_task_blocking(PTORuntime* rt) {
             timeout.tv_nsec -= 1000000000;
         }
         pthread_cond_timedwait(&rt->queue_not_empty, &rt->queue_mutex, &timeout);
+        
+        // Re-check execution condition after wakeup
+        can_execute = rt->execution_started || 
+                      (rt->execution_task_threshold > 0 && 
+                       rt->total_tasks_scheduled > rt->execution_task_threshold);
     }
     
     if (rt->shutdown_requested || rt->ready_count == 0) {
@@ -333,21 +346,32 @@ void pto_task_add_input(PTORuntime* rt, int32_t task_id,
     int32_t producer_id = pto_tensormap_lookup(rt, &region);
     
     if (producer_id >= 0 && producer_id != task_id) {
-        // Found producer - add dependency
+        // Found producer - add dependency (needs mutex for pipelined execution)
+        pthread_mutex_lock(&rt->task_mutex);
+        
         PendingTask* producer = &rt->pend_task[producer_id];
         
-        // Add current task to producer's fanout
-        if (producer->fanout_count < PTO_MAX_FANOUT) {
-            producer->fanout[producer->fanout_count++] = task_id;
+        // Check if producer is already complete (pipelined execution race condition)
+        if (producer->is_complete) {
+            // Producer already done - no need to add dependency
+            pthread_mutex_unlock(&rt->task_mutex);
+            DEBUG_PRINT("[PTO Runtime] Task %d: producer %d already complete, no dependency added\n",
+                   task_id, producer_id);
         } else {
-            fprintf(stderr, "[PTO Runtime] WARNING: Fanout overflow for task %d\n", producer_id);
+            // Add current task to producer's fanout
+            if (producer->fanout_count < PTO_MAX_FANOUT) {
+                producer->fanout[producer->fanout_count++] = task_id;
+            } else {
+                fprintf(stderr, "[PTO Runtime] WARNING: Fanout overflow for task %d\n", producer_id);
+            }
+            
+            // Increment fanin (dependency count)
+            task->fanin++;
+            
+            pthread_mutex_unlock(&rt->task_mutex);
+            DEBUG_PRINT("[PTO Runtime] Task %d depends on task %d (tensor=%p, offset=[%lld,%lld])\n",
+                   task_id, producer_id, tensor, (long long)row_off, (long long)col_off);
         }
-        
-        // Increment fanin (dependency count)
-        task->fanin++;
-        
-        DEBUG_PRINT("[PTO Runtime] Task %d depends on task %d (tensor=%p, offset=[%lld,%lld])\n",
-               task_id, producer_id, tensor, (long long)row_off, (long long)col_off);
     } else {
         DEBUG_PRINT("[PTO Runtime] Task %d input (tensor=%p, offset=[%lld,%lld]) - no producer\n",
                task_id, tensor, (long long)row_off, (long long)col_off);
@@ -901,7 +925,8 @@ static void* worker_thread_func(void* arg) {
 /**
  * ARM64 Runtime Entry Point
  */
-int runtime_entry_arm64(PTOOrchFunc orch_func, void* user_data, int num_workers) {
+int runtime_entry_arm64(PTOOrchFunc orch_func, void* user_data, int num_workers,
+                        int execution_task_threshold) {
     if (!orch_func) {
         fprintf(stderr, "[PTO Runtime] ERROR: No orchestration function provided\n");
         return -1;
@@ -909,10 +934,16 @@ int runtime_entry_arm64(PTOOrchFunc orch_func, void* user_data, int num_workers)
     
     if (num_workers < 1) num_workers = 1;
     if (num_workers > PTO_MAX_WORKERS) num_workers = PTO_MAX_WORKERS;
+    if (execution_task_threshold < 0) execution_task_threshold = 0;
     
     printf("[PTO Runtime] ========================================\n");
     printf("[PTO Runtime] ARM64 Multi-threaded Execution\n");
     printf("[PTO Runtime] Workers: %d\n", num_workers);
+    if (execution_task_threshold > 0) {
+        printf("[PTO Runtime] Execution threshold: %d tasks (pipelined)\n", execution_task_threshold);
+    } else {
+        printf("[PTO Runtime] Execution mode: wait for orchestration\n");
+    }
     printf("[PTO Runtime] ========================================\n");
     
     // Allocate runtime on heap (PTORuntime can be large)
@@ -927,6 +958,7 @@ int runtime_entry_arm64(PTOOrchFunc orch_func, void* user_data, int num_workers)
     rt->num_workers = num_workers;
     rt->shutdown_requested = false;
     rt->execution_started = false;
+    rt->execution_task_threshold = execution_task_threshold;
     
     // Spawn worker threads
     printf("[PTO Runtime] Spawning %d worker threads...\n", num_workers);

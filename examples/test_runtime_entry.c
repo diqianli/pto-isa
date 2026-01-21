@@ -256,8 +256,9 @@ int verify_softmax(float* input, float* output, int total_rows, int cols) {
 int main(int argc, char** argv) {
     int num_workers = DEFAULT_NUM_WORKERS;
     int num_tiles = DEFAULT_NUM_TILES;
+    int threshold = 0;  // Default: wait for orchestration to complete
     
-    // Parse command line arguments
+    // Parse command line arguments: ./test_runtime_entry [workers] [tiles] [threshold]
     if (argc > 1) {
         num_workers = atoi(argv[1]);
         if (num_workers < 1) num_workers = 1;
@@ -266,6 +267,10 @@ int main(int argc, char** argv) {
     if (argc > 2) {
         num_tiles = atoi(argv[2]);
         if (num_tiles < 1) num_tiles = 1;
+    }
+    if (argc > 3) {
+        threshold = atoi(argv[3]);
+        if (threshold < 0) threshold = 0;
     }
     
     int total_rows = num_tiles * TILE_ROWS;
@@ -281,6 +286,7 @@ int main(int argc, char** argv) {
     printf("  Tile size:  %d x %d\n", TILE_ROWS, TILE_COLS);
     printf("  Total rows: %d\n", total_rows);
     printf("  Total ops:  %d (5 ops per tile)\n", num_tiles * 5);
+    printf("  Threshold:  %d %s\n", threshold, threshold > 0 ? "(pipelined)" : "(wait for orchestration)");
     printf("================================================================================\n\n");
     
     // Allocate buffers
@@ -319,7 +325,9 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &start);
     
     // Execute using multi-threaded runtime
-    int result = runtime_entry_arm64(softmax_orchestration, &user_data, num_workers);
+    // threshold=0: wait for orchestration to complete before executing (safe)
+    // threshold>0: start executing when task_count > threshold (pipelined)
+    int result = runtime_entry_arm64(softmax_orchestration, &user_data, num_workers, threshold);
     
     clock_gettime(CLOCK_MONOTONIC, &end);
     
