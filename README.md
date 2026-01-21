@@ -8,6 +8,7 @@
 - [2. 编程接口 - Function Builder](#2-编程接口---function-builder)
 - [3. 文件接口 - .pto Assembly](#3-文件接口---pto-assembly)
 - [4. Runtime Task 数据结构](#4-runtime-task-数据结构)
+  - [4.5 ARM64 多线程 Runtime 执行](#45-arm64-多线程-runtime-执行)
 - [5. Task Dump 与可视化](#5-task-dump-与可视化)
 - [6. 动态 Shape 支持](#6-动态-shape-支持)
 
@@ -604,6 +605,150 @@ void run_llama_layer(int seq_len) {
 - `sizeof(PendingTask)` = 2,864 bytes
 - `sizeof(TensorMapEntry)` = 56 bytes
 - `PTO_MAX_TASKS` = 262,144 (可容纳 seq_len ≤ 16K)
+
+### 4.5 ARM64 多线程 Runtime 执行
+
+PTO Runtime 提供 `runtime_entry_arm64()` 函数，支持多线程并行执行 Task Graph：
+
+```c
+// 函数签名
+int runtime_entry_arm64(
+    PTOOrchFunc orch_func,          // Orchestration 函数指针
+    void* user_data,                // 用户数据
+    int num_workers,                // Worker 线程数
+    int execution_task_threshold    // 执行阈值
+);
+```
+
+#### 执行模式
+
+| 参数 | 模式 | 行为 | 适用场景 |
+|------|------|------|---------|
+| `threshold=0` | **Safe** | 等待 Orchestration 完成后才执行任务 | 任务图较小 |
+| `threshold>0` | **Pipelined** | 当 `task_count > threshold` 时开始执行 | 大任务图，边构建边执行 |
+
+#### 执行流程
+
+```
+runtime_entry_arm64()
+         │
+         ├─── 1. 初始化 Runtime (mutex, cond_var)
+         │
+         ├─── 2. 创建 Worker 线程池
+         │         └── 每个 Worker 等待 ready_queue
+         │
+         ├─── 3. 调用 Orchestration Function
+         │         └── 构建 Task Graph (pto_task_alloc/submit)
+         │
+         ├─── 4. 设置 execution_started = true
+         │         └── 唤醒所有 Workers
+         │
+         ├─── 5. Workers 并行执行任务
+         │         ├── 从 ready_queue 取任务
+         │         ├── 调用 InCore 函数
+         │         └── pto_task_complete() 更新依赖
+         │
+         └─── 6. 等待所有任务完成，清理退出
+```
+
+#### 线程安全设计
+
+```c
+typedef struct PTORuntime {
+    // 线程同步
+    pthread_mutex_t   queue_mutex;        // 保护 ready_queue
+    pthread_mutex_t   task_mutex;         // 保护 task 状态
+    pthread_cond_t    queue_not_empty;    // 任务入队时信号
+    pthread_cond_t    all_done;           // 所有任务完成时信号
+
+    // Worker 线程
+    pthread_t         workers[PTO_MAX_WORKERS];
+    int32_t           num_workers;
+    volatile bool     shutdown_requested;
+    volatile bool     execution_started;
+    int32_t           execution_task_threshold;
+} PTORuntime;
+```
+
+**关键同步点：**
+- `pto_task_submit()`: 根据 `execution_started` 选择线程安全版本
+- `pto_task_add_input()`: 检查 producer 是否已完成（Pipelined 模式竞态修复）
+- `pto_task_complete_threadsafe()`: 更新 fanin 并唤醒依赖任务
+
+#### 使用示例
+
+```c
+// 定义 Orchestration 函数
+void my_softmax_orchestration(PTORuntime* rt, void* user_data) {
+    UserData* data = (UserData*)user_data;
+    
+    for (int tile = 0; tile < data->num_tiles; tile++) {
+        int32_t t0 = pto_task_alloc(rt, "rowmax", rowmax_func, 0, 0);
+        pto_task_add_input(rt, t0, data->input, tile * TILE_SIZE, 0, TILE_ROWS, TILE_COLS);
+        pto_task_add_output(rt, t0, data->temp, tile * TILE_SIZE, 0, TILE_ROWS, 1);
+        pto_task_submit(rt, t0);
+        // ... 更多任务
+    }
+}
+
+// 调用执行
+int main() {
+    UserData data = { .input = input, .output = output, .num_tiles = 256 };
+    
+    // Safe 模式: 等待构图完成
+    runtime_entry_arm64(my_softmax_orchestration, &data, 8, 0);
+    
+    // Pipelined 模式: 20 个任务后开始执行
+    runtime_entry_arm64(my_softmax_orchestration, &data, 8, 20);
+}
+```
+
+#### 性能测试结果
+
+**简化 LLaMA Layer 测试 (RMSNorm + Linear + Scale + Residual):**
+
+| SeqLen | Tiles | Tasks | Workers | Threshold | Time | Tasks/sec | 验证 |
+|--------|-------|-------|---------|-----------|------|-----------|------|
+| 128 | 4 | 16 | 4 | 0 (safe) | 108ms | 147 | ✅ PASSED |
+| 256 | 8 | 32 | 4 | 10 (pipe) | 75ms | 427 | ✅ PASSED |
+| 512 | 16 | 64 | 8 | 0 (safe) | 72ms | 889 | ✅ PASSED |
+| **8K** | 256 | 1024 | 8 | 20 (pipe) | 96ms | **10,680** | ✅ PASSED |
+
+**Fused Softmax 测试 (5 ops/tile):**
+
+| Mode | Tasks | Time | Tasks/sec | 提升 |
+|------|-------|------|-----------|------|
+| Safe (threshold=0) | 320 | 102ms | 3,144 | baseline |
+| **Pipelined (threshold=20)** | 320 | **73ms** | **4,387** | **+40%** |
+
+#### 数值精度验证 (seq_len=8K)
+
+```
+================================================================================
+Numerical Precision Analysis (seq_len=8K)
+================================================================================
+Total elements:       1,048,576 (4.0 MB)
+Max absolute diff:    0.00e+00
+Max relative diff:    0.00e+00
+Mean absolute diff:   0.00e+00
+Elements >1e-4 error: 0 (0.0000%)
+
+Tile Spot Checks:
+  Tile   0 (First):   output = [-1.25575, 0.06854, 0.60044] ✓ 完全匹配
+  Tile  63 (25%):     output = [-0.51724, -0.82718, 0.60869] ✓ 完全匹配
+  Tile 127 (50%):     output = [-0.75333, -0.22652, -1.22866] ✓ 完全匹配
+  Tile 191 (75%):     output = [-0.01698, 0.85493, -0.83697] ✓ 完全匹配
+  Tile 255 (Last):    output = [0.76732, -1.18859, 0.68800] ✓ 完全匹配
+
+Result: PASSED ✓ - All 1,048,576 elements match reference!
+================================================================================
+```
+
+**验证结论：**
+- ✅ 多线程调度完全正确
+- ✅ 任务依赖解析无误
+- ✅ Pipelined 模式数据一致性完好
+- ✅ InCore 函数计算精确
 
 ---
 
