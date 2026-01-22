@@ -15,12 +15,14 @@
 #define RUNTIME_DEVICERUNNER_H
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 #include <runtime/rt.h>
 #include "../graph/kernel_args.h"
 #include "../graph/handshake.h"
 #include "memoryallocator.h"
+#include "function_cache.h"
 
 // Forward declarations
 class Graph;
@@ -252,6 +254,83 @@ public:
      */
     int LauncherAicoreKernel(rtStream_t stream, KernelArgs *kernelArgs);
 
+    /**
+     * Register a kernel binary path for a func_id
+     *
+     * Should be called during Init() for each kernel before LoadKernelsToDevice().
+     * Maps a function ID (used in tasks) to the path of its compiled .o file.
+     *
+     * @param funcId   Function identifier (0, 1, 2, ...)
+     * @param binPath  Path to the kernel .o file
+     */
+    void RegisterKernel(int funcId, const std::string& binPath);
+
+    /**
+     * Load all registered kernels, build cache, copy to device
+     *
+     * Called once after all RegisterKernel() calls during initialization.
+     * This method:
+     * 1. Loads each .o file using LoadBinData() (extracts .text section)
+     * 2. Builds CoreFunctionBinCache with all kernel binaries
+     * 3. Allocates device GM memory for the cache
+     * 4. Copies cache to device
+     * 5. Calculates functionBinAddr[i] = gmBaseAddr + offset[i]
+     * 6. Stores addresses for later retrieval via GetFunctionBinAddr()
+     *
+     * @return 0 on success, error code on failure
+     */
+    int LoadKernelsToDevice();
+
+    /**
+     * Get functionBinAddr for a given func_id
+     *
+     * Returns the device GM address where the kernel binary resides.
+     * This address can be cast to a function pointer and called.
+     *
+     * @param funcId  Function identifier
+     * @return Device GM address of kernel, or 0 if not found
+     */
+    uint64_t GetFunctionBinAddr(int funcId);
+
+    /**
+     * Compile and load a kernel at runtime
+     *
+     * This function combines compilation, registration, and loading:
+     * 1. Compiles the kernel source file using KernelCompiler
+     * 2. Registers the compiled binary with the given func_id
+     * 3. Loads the kernel binary to device GM memory
+     * 4. Updates funcIdToAddr_ mapping
+     *
+     * Requirements:
+     * - ASCEND_HOME_PATH must be set (for ccec compiler)
+     * - PTO-ISA headers must be available at ptoIsaRoot
+     * - DeviceRunner must be initialized before calling this
+     *
+     * @param funcId      Function identifier for this kernel
+     * @param sourcePath  Path to kernel source file (.cpp)
+     * @param ptoIsaRoot  Path to PTO-ISA root directory (headers location)
+     * @return 0 on success, -1 on error
+     *
+     * Example:
+     *   runner.Init(0, 3, "./aicpu/lib.so", "./aicore/kernel.o");
+     *   runner.CompileAndLoadKernel(0, "./aicore/kernels/kernel_add.cpp", "/path/to/pto-isa");
+     */
+    int CompileAndLoadKernel(int funcId,
+                            const std::string& sourcePath,
+                            const std::string& ptoIsaRoot);
+
+    /**
+     * Load a single kernel binary to device GM memory
+     *
+     * This is a helper function for incremental kernel loading.
+     * It loads a single .o file and extends the device GM cache.
+     *
+     * @param funcId   Function identifier
+     * @param binPath  Path to compiled .o file
+     * @return 0 on success, -1 on error
+     */
+    int LoadSingleKernelToDevice(int funcId, const std::string& binPath);
+
 private:
     DeviceRunner() = default;
 
@@ -273,6 +352,12 @@ private:
 
     // Handshake buffers
     std::vector<Handshake> hankArgs_;
+
+    // Kernel binary management (NEW - for runtime function pointer dispatch)
+    CoreFunctionBinCache* binCache_{nullptr};         // Host-side cache structure
+    void* binGmAddr_{nullptr};                        // Device GM base address
+    std::map<int, uint64_t> funcIdToAddr_;           // func_id -> functionBinAddr
+    std::map<int, std::string> funcIdToBinPath_;     // func_id -> .o file path
 };
 
 #endif  // RUNTIME_DEVICERUNNER_H

@@ -71,48 +71,28 @@ __aicore__ __attribute__((always_inline)) void runTAdd(__gm__ T __out__ *out, __
 }
 
 /**
- * Simple kernel: Add two tensors element-wise
- * Computes: out[i] = src0[i] + src1[i]
- */
-__aicore__ __attribute__((always_inline)) static void kernel_add(__gm__ float* out, __gm__ float* src0, __gm__ float* src1, int size)
-{
-    for (int i = 0; i < size; i++) {
-        out[i] = src0[i] + src1[i];
-    }
-}
-
-/**
- * Simple kernel: Add scalar to tensor
- * Computes: out[i] = src[i] + scalar
- */
-__aicore__ __attribute__((always_inline)) static void kernel_add_scalar(__gm__ float* out, __gm__ float* src, float scalar, int size)
-{
-    for (int i = 0; i < size; i++) {
-        out[i] = src[i] + scalar;
-    }
-}
-
-/**
- * Simple kernel: Multiply two tensors element-wise
- * Computes: out[i] = src0[i] * src1[i]
- */
-__aicore__ __attribute__((always_inline)) static void kernel_mul(__gm__ float* out, __gm__ float* src0, __gm__ float* src1, int size)
-{
-    for (int i = 0; i < size; i++) {
-        out[i] = src0[i] * src1[i];
-    }
-}
-
-
-
-/**
- * Task execution wrapper - dispatches tasks based on function ID
+ * Unified function pointer type for kernel dispatch
  *
- * This function executes a task on the AICore. The task pointer is provided
- * by AICPU through the handshake buffer and contains:
- * - func_id: identifies which function to execute (0 = TADD, etc.)
- * - args: function-specific arguments
- * - dependency metadata (fanin/fanout)
+ * All kernels follow the same signature: void kernel(__gm__ int64_t* args)
+ * This enables simple, switch-free dispatch.
+ */
+typedef void (*UnifiedKernelFunc)(__gm__ int64_t*);
+
+/**
+ * Task execution wrapper - dispatches tasks using function pointers
+ *
+ * This function demonstrates the runtime function pointer dispatch pattern.
+ * Following the production system flow:
+ * - functionBinAddr points to compiled kernel code in device GM memory
+ * - The address is cast to a function pointer: UnifiedKernelFunc kernel = (UnifiedKernelFunc)functionBinAddr
+ * - The kernel is invoked: kernel(task->args)
+ *
+ * This is the KEY difference from compile-time linking:
+ * - OLD: extern "C" declarations, resolved at link time
+ * - NEW: functionBinAddr from GM memory, cast at runtime
+ *
+ * With unified kernel signature, no switch statement is needed.
+ * All kernels unpack their own arguments from the args array.
  *
  * @param task Pointer to task in global memory (null during initialization)
  */
@@ -123,46 +103,16 @@ __aicore__ __attribute__((always_inline)) static void execute_task(__gm__ Task* 
         return;
     }
 
-    // Helper union to convert uint64_t to float for scalar arguments
-    union {
-        uint64_t u64;
-        float f32;
-    } converter;
-
-    // Dispatch to specific function based on task->func_id
-    switch(task->func_id) {
-        case 0:  // kernel_add: out = src0 + src1
-            {
-                __gm__ float* src0 = reinterpret_cast<__gm__ float*>(task->args[0]);
-                __gm__ float* src1 = reinterpret_cast<__gm__ float*>(task->args[1]);
-                __gm__ float* out = reinterpret_cast<__gm__ float*>(task->args[2]);
-                int size = static_cast<int>(task->args[3]);
-                kernel_add(out, src0, src1, size);
-            }
-            break;
-        case 1:  // kernel_add_scalar: out = src + scalar
-            {
-                __gm__ float* src = reinterpret_cast<__gm__ float*>(task->args[0]);
-                converter.u64 = task->args[1];
-                float scalar = converter.f32;
-                __gm__ float* out = reinterpret_cast<__gm__ float*>(task->args[2]);
-                int size = static_cast<int>(task->args[3]);
-                kernel_add_scalar(out, src, scalar, size);
-            }
-            break;
-        case 2:  // kernel_mul: out = src0 * src1
-            {
-                __gm__ float* src0 = reinterpret_cast<__gm__ float*>(task->args[0]);
-                __gm__ float* src1 = reinterpret_cast<__gm__ float*>(task->args[1]);
-                __gm__ float* out = reinterpret_cast<__gm__ float*>(task->args[2]);
-                int size = static_cast<int>(task->args[3]);
-                kernel_mul(out, src0, src1, size);
-            }
-            break;
-        default:
-            // Unknown function ID - skip execution
-            break;
+    // Check for valid functionBinAddr
+    if (task->functionBinAddr == 0) {
+        // Invalid address - skip execution
+        return;
     }
+
+    // Cast functionBinAddr to unified function pointer and invoke
+    // All kernels have signature: void kernel(__gm__ int64_t* args)
+    UnifiedKernelFunc kernel = (UnifiedKernelFunc)task->functionBinAddr;
+    kernel(reinterpret_cast<__gm__ int64_t*>(task->args));
 }
 
 /**

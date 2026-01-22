@@ -46,6 +46,7 @@ int Graph::add_task(uint64_t* args, int num_args, int func_id) {
     if (args && num_args > 0) {
         memcpy(task->args, args, num_args * sizeof(uint64_t));
     }
+    task->functionBinAddr = 0;  // Will be set by host before copying to device
     task->fanin = 0;
     task->fanout_count = 0;
     memset(task->fanout, 0, sizeof(task->fanout));

@@ -5,10 +5,12 @@ Graph Builder Example (Python)
 This program demonstrates how to build a task dependency graph and execute it
 on Ascend devices using the Python bindings for DeviceRunner and Graph.
 
-This is a Python translation of graphbuilder.cpp.
+This is a Python translation of the C++ graphbuilder example, now with
+runtime kernel compilation support.
 """
 
 import sys
+import os
 import numpy as np
 
 # Import the PTO runtime Python module
@@ -41,10 +43,43 @@ def main():
 
     # Initialize DeviceRunner
     runner = pto_runtime.DeviceRunner.get()
-    rc = runner.init(device_id, 3, "./aicpu/libaicpu_graph_kernel.so", "./aicore/kernel.o")
+    rc = runner.init(device_id, 3, "../../aicpu/libaicpu_graph_kernel.so", "../../aicore/kernel.o")
     if rc != 0:
         print("Error: DeviceRunner initialization failed")
         return rc
+
+    # Compile and load kernels at runtime
+    print("\n=== Compiling Kernels at Runtime ===")
+
+    # Get PTO-ISA root from environment or use default
+    pto_isa_root = os.environ.get("PTO_ISA_ROOT")
+    if pto_isa_root is None:
+        # Fallback to build directory location
+        pto_isa_root = "../../_deps/pto-isa-src"
+        print(f"PTO_ISA_ROOT not set, using default: {pto_isa_root}")
+
+    # Compile and load kernel_add (func_id=0)
+    rc = runner.compile_and_load_kernel(0, "kernels/kernel_add.cpp", pto_isa_root)
+    if rc != 0:
+        print("Error: Failed to compile kernel_add")
+        runner.finalize()
+        return rc
+
+    # Compile and load kernel_add_scalar (func_id=1)
+    rc = runner.compile_and_load_kernel(1, "kernels/kernel_add_scalar.cpp", pto_isa_root)
+    if rc != 0:
+        print("Error: Failed to compile kernel_add_scalar")
+        runner.finalize()
+        return rc
+
+    # Compile and load kernel_mul (func_id=2)
+    rc = runner.compile_and_load_kernel(2, "kernels/kernel_mul.cpp", pto_isa_root)
+    if rc != 0:
+        print("Error: Failed to compile kernel_mul")
+        runner.finalize()
+        return rc
+
+    print("All kernels compiled and loaded successfully\n")
 
     # Allocate device tensors
     ROWS = 128
@@ -52,7 +87,7 @@ def main():
     SIZE = ROWS * COLS  # 16384 elements
     BYTES = SIZE * 4  # sizeof(float)
 
-    print("\n=== Allocating Device Memory ===")
+    print("=== Allocating Device Memory ===")
     dev_a = runner.allocate_tensor(BYTES)
     dev_b = runner.allocate_tensor(BYTES)
     dev_c = runner.allocate_tensor(BYTES)

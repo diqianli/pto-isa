@@ -19,6 +19,8 @@ FetchContent_MakeAvailable(pybind11)
 pybind11_add_module(pto_runtime bindings.cpp
     ../host/devicerunner.cpp
     ../host/memoryallocator.cpp
+    ../host/binary_loader.cpp
+    ../host/kernel_compiler.cpp
     ../graph/graph.cpp
 )
 

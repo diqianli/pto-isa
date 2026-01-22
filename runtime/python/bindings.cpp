@@ -62,7 +62,12 @@ PYBIND11_MODULE(pto_runtime, m) {
         .def_static("get", &DeviceRunner::Get, py::return_value_policy::reference,
             "Get the singleton DeviceRunner instance")
 
-        .def("init", &DeviceRunner::Init,
+        .def("init",
+            [](DeviceRunner& self, int device_id, int num_cores,
+               const std::string& aicpu_so_path,
+               const std::string& aicore_kernel_path = "./aicore/kernel.o") {
+                return self.Init(device_id, num_cores, aicpu_so_path, aicore_kernel_path);
+            },
             py::arg("device_id"), py::arg("num_cores"),
             py::arg("aicpu_so_path"), py::arg("aicore_kernel_path") = "./aicore/kernel.o",
             "Initialize the device and runtime resources.\n"
@@ -70,11 +75,25 @@ PYBIND11_MODULE(pto_runtime, m) {
             "    device_id: Device ID (0-15)\n"
             "    num_cores: Number of cores for handshake (e.g., 3 for 1c2v)\n"
             "    aicpu_so_path: Path to AICPU shared object\n"
-            "    aicore_kernel_path: Path to AICore kernel binary\n"
+            "    aicore_kernel_path: Path to AICore kernel binary (optional)\n"
             "Returns:\n"
             "    0 on success, error code on failure")
 
-        .def("allocate_tensor", &DeviceRunner::AllocateTensor,
+        .def("compile_and_load_kernel", &DeviceRunner::CompileAndLoadKernel,
+            py::arg("func_id"), py::arg("kernel_path"), py::arg("pto_isa_root"),
+            "Compile and load a kernel at runtime.\n"
+            "Args:\n"
+            "    func_id: Function identifier for this kernel\n"
+            "    kernel_path: Path to kernel source file (.cpp)\n"
+            "    pto_isa_root: Path to PTO-ISA root directory\n"
+            "Returns:\n"
+            "    0 on success, error code on failure")
+
+        .def("allocate_tensor",
+            [](DeviceRunner& self, size_t bytes) -> uintptr_t {
+                void* ptr = self.AllocateTensor(bytes);
+                return reinterpret_cast<uintptr_t>(ptr);
+            },
             py::arg("bytes"),
             "Allocate device tensor memory.\n"
             "Args:\n"
@@ -82,7 +101,10 @@ PYBIND11_MODULE(pto_runtime, m) {
             "Returns:\n"
             "    Device pointer as integer (0 on failure)")
 
-        .def("free_tensor", &DeviceRunner::FreeTensor,
+        .def("free_tensor",
+            [](DeviceRunner& self, uintptr_t ptr) {
+                self.FreeTensor(reinterpret_cast<void*>(ptr));
+            },
             py::arg("ptr"),
             "Free device tensor memory.\n"
             "Args:\n"

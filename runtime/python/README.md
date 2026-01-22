@@ -23,24 +23,18 @@ Python bindings for the PTO Runtime, enabling graph building and device executio
 
 3. The Python module `pto_runtime` will be built in `runtime/build/python/`
 
-## Using the Bindings
+## Example Usage
 
-### Setting up the Python path
+For a complete working example with runtime kernel compilation, see the [basic_python example](../example/basic_python/README.md) in `runtime/example/basic_python/`.
+
+### Quick Start
 
 Add the build directory to your PYTHONPATH:
 ```bash
 export PYTHONPATH=/path/to/runtime/build/python:$PYTHONPATH
 ```
 
-Or run from the build/python directory:
-```bash
-cd runtime/build/python
-python3 ../../python/graphbuilder.py 9
-```
-
-### Example Usage
-
-See [graphbuilder.py](graphbuilder.py) for a complete example. Here's a quick overview:
+Basic usage:
 
 ```python
 import numpy as np
@@ -49,8 +43,10 @@ import pto_runtime
 # Initialize device runner
 runner = pto_runtime.DeviceRunner.get()
 runner.init(device_id=9, num_cores=3,
-            aicpu_so_path="./aicpu/libaicpu_graph_kernel.so",
-            aicore_kernel_path="./aicore/kernel.o")
+            aicpu_so_path="./aicpu/libaicpu_graph_kernel.so")
+
+# Compile and load a kernel at runtime
+runner.compile_and_load_kernel(0, "path/to/kernel.cpp", pto_isa_root)
 
 # Allocate device tensors
 SIZE = 128 * 128 * 4  # bytes
@@ -97,7 +93,8 @@ runner.finalize()
 ### DeviceRunner Class
 
 - `DeviceRunner.get()` - Get singleton instance (static method)
-- `init(device_id, num_cores, aicpu_so_path, aicore_kernel_path) -> int` - Initialize device
+- `init(device_id, num_cores, aicpu_so_path, aicore_kernel_path="./aicore/kernel.o") -> int` - Initialize device
+- `compile_and_load_kernel(func_id, kernel_path, pto_isa_root) -> int` - Compile and load kernel at runtime
 - `allocate_tensor(bytes: int) -> int` - Allocate device memory
 - `free_tensor(ptr: int)` - Free device memory
 - `copy_to_device(dev_ptr: int, host_data: np.ndarray) -> int` - Copy to device
@@ -108,9 +105,14 @@ runner.finalize()
 
 ## Running the Example
 
+For a complete working example, see the [basic_python example](../example/basic_python/):
+
 ```bash
-cd runtime/build/python
-python3 ../../python/graphbuilder.py 9
+cd runtime/build
+export PYTHONPATH=$(pwd)/python:$PYTHONPATH
+export PTO_ISA_ROOT=$(pwd)/_deps/pto-isa-src
+cd example/basic_python
+python3 graphbuilder.py 9
 ```
 
 Expected output:

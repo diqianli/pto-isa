@@ -40,6 +40,46 @@ int main(int argc, char **argv) {
         return rc;
     }
 
+    // Compile and load kernels at runtime
+    std::cout << "\n=== Compiling Kernels at Runtime ===" << '\n';
+
+    // Get PTO-ISA root from environment or use default
+    const char* ptoIsaRootEnv = std::getenv("PTO_ISA_ROOT");
+    std::string ptoIsaRoot;
+    if (ptoIsaRootEnv != nullptr) {
+        ptoIsaRoot = ptoIsaRootEnv;
+    } else {
+        // Fallback to build directory location
+        ptoIsaRoot = "./build/_deps/pto-isa-src";
+        std::cout << "PTO_ISA_ROOT not set, using default: " << ptoIsaRoot << '\n';
+    }
+
+    // Compile and load kernel_add (func_id=0)
+    rc = runner.CompileAndLoadKernel(0, "kernels/kernel_add.cpp", ptoIsaRoot);
+    if (rc != 0) {
+        std::cerr << "Error: Failed to compile kernel_add" << '\n';
+        runner.Finalize();
+        return rc;
+    }
+
+    // Compile and load kernel_add_scalar (func_id=1)
+    rc = runner.CompileAndLoadKernel(1, "kernels/kernel_add_scalar.cpp", ptoIsaRoot);
+    if (rc != 0) {
+        std::cerr << "Error: Failed to compile kernel_add_scalar" << '\n';
+        runner.Finalize();
+        return rc;
+    }
+
+    // Compile and load kernel_mul (func_id=2)
+    rc = runner.CompileAndLoadKernel(2, "kernels/kernel_mul.cpp", ptoIsaRoot);
+    if (rc != 0) {
+        std::cerr << "Error: Failed to compile kernel_mul" << '\n';
+        runner.Finalize();
+        return rc;
+    }
+
+    std::cout << "All kernels compiled and loaded successfully\n";
+
     // Allocate device tensors
     constexpr int ROWS = 128;
     constexpr int COLS = 128;

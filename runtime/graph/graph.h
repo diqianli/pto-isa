@@ -55,6 +55,11 @@ typedef struct {
   uint64_t args[GRAPH_MAX_ARGS]; // Task arguments
   int num_args;                  // Number of valid arguments
 
+  // Runtime function pointer address (NEW)
+  // This is the GM address where the kernel binary resides
+  // It's cast to a function pointer at runtime: (KernelFunc)functionBinAddr
+  uint64_t functionBinAddr;     // Address of kernel in device GM memory
+
   // Dependency tracking (using PTO runtime terminology)
   int fanin;                    // Number of predecessors (dependencies)
   int fanout[GRAPH_MAX_FANOUT]; // Successor task IDs
