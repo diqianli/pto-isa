@@ -1,0 +1,178 @@
+{
+  "timestamp": "2026-01-24T02:45:21.508212",
+  "benchmark_type": "orchestration",
+  "platform": "ascend_a2a3_sim",
+  "seq_len_range": {
+    "min": 1024,
+    "max": 16384,
+    "step": 1024
+  },
+  "iterations": 1,
+  "results": [
+    {
+      "seq_len": 1024,
+      "num_tiles": 32,
+      "tasks_submitted": 3584,
+      "avg_time_ms": 0.774,
+      "min_time_ms": 0.774,
+      "max_time_ms": 0.774,
+      "tasks_per_ms": 4630.49,
+      "tasks_per_sec": 4630490.0
+    },
+    {
+      "seq_len": 2048,
+      "num_tiles": 64,
+      "tasks_submitted": 13312,
+      "avg_time_ms": 2.214,
+      "min_time_ms": 2.214,
+      "max_time_ms": 2.214,
+      "tasks_per_ms": 6012.65,
+      "tasks_per_sec": 6012650.0
+    },
+    {
+      "seq_len": 3072,
+      "num_tiles": 96,
+      "tasks_submitted": 29184,
+      "avg_time_ms": 3.52,
+      "min_time_ms": 3.52,
+      "max_time_ms": 3.52,
+      "tasks_per_ms": 8290.91,
+      "tasks_per_sec": 8290910.0
+    },
+    {
+      "seq_len": 4096,
+      "num_tiles": 128,
+      "tasks_submitted": 51200,
+      "avg_time_ms": 5.105,
+      "min_time_ms": 5.105,
+      "max_time_ms": 5.105,
+      "tasks_per_ms": 10029.38,
+      "tasks_per_sec": 10029380.0
+    },
+    {
+      "seq_len": 5120,
+      "num_tiles": 160,
+      "tasks_submitted": 79360,
+      "avg_time_ms": 8.116,
+      "min_time_ms": 8.116,
+      "max_time_ms": 8.116,
+      "tasks_per_ms": 9778.22,
+      "tasks_per_sec": 9778220.0
+    },
+    {
+      "seq_len": 6144,
+      "num_tiles": 192,
+      "tasks_submitted": 113664,
+      "avg_time_ms": 12.823,
+      "min_time_ms": 12.823,
+      "max_time_ms": 12.823,
+      "tasks_per_ms": 8864.07,
+      "tasks_per_sec": 8864070.0
+    },
+    {
+      "seq_len": 7168,
+      "num_tiles": 224,
+      "tasks_submitted": 154112,
+      "avg_time_ms": 17.686,
+      "min_time_ms": 17.686,
+      "max_time_ms": 17.686,
+      "tasks_per_ms": 8713.78,
+      "tasks_per_sec": 8713780.0
+    },
+    {
+      "seq_len": 8192,
+      "num_tiles": 256,
+      "tasks_submitted": 200704,
+      "avg_time_ms": 22.609,
+      "min_time_ms": 22.609,
+      "max_time_ms": 22.609,
+      "tasks_per_ms": 8877.17,
+      "tasks_per_sec": 8877170.0
+    },
+    {
+      "seq_len": 9216,
+      "num_tiles": 288,
+      "tasks_submitted": 253440,
+      "avg_time_ms": 36.207,
+      "min_time_ms": 36.207,
+      "max_time_ms": 36.207,
+      "tasks_per_ms": 6999.75,
+      "tasks_per_sec": 6999750.0
+    },
+    {
+      "seq_len": 10240,
+      "num_tiles": 320,
+      "tasks_submitted": 312320,
+      "avg_time_ms": 50.379,
+      "min_time_ms": 50.379,
+      "max_time_ms": 50.379,
+      "tasks_per_ms": 6199.41,
+      "tasks_per_sec": 6199410.0
+    },
+    {
+      "seq_len": 11264,
+      "num_tiles": 352,
+      "tasks_submitted": 377344,
+      "avg_time_ms": 65.683,
+      "min_time_ms": 65.683,
+      "max_time_ms": 65.683,
+      "tasks_per_ms": 5744.93,
+      "tasks_per_sec": 5744930.0
+    },
+    {
+      "seq_len": 12288,
+      "num_tiles": 384,
+      "tasks_submitted": 448512,
+      "avg_time_ms": 85.275,
+      "min_time_ms": 85.275,
+      "max_time_ms": 85.275,
+      "tasks_per_ms": 5259.6,
+      "tasks_per_sec": 5259600.0
+    },
+    {
+      "seq_len": 13312,
+      "num_tiles": 416,
+      "tasks_submitted": 525824,
+      "avg_time_ms": 106.689,
+      "min_time_ms": 106.689,
+      "max_time_ms": 106.689,
+      "tasks_per_ms": 4928.57,
+      "tasks_per_sec": 4928570.0
+    },
+    {
+      "seq_len": 14336,
+      "num_tiles": 448,
+      "tasks_submitted": 609280,
+      "avg_time_ms": 128.023,
+      "min_time_ms": 128.023,
+      "max_time_ms": 128.023,
+      "tasks_per_ms": 4759.14,
+      "tasks_per_sec": 4759140.0
+    },
+    {
+      "seq_len": 15360,
+      "num_tiles": 480,
+      "tasks_submitted": 698880,
+      "avg_time_ms": 152.854,
+      "min_time_ms": 152.854,
+      "max_time_ms": 152.854,
+      "tasks_per_ms": 4572.21,
+      "tasks_per_sec": 4572210.0
+    },
+    {
+      "seq_len": 16384,
+      "num_tiles": 512,
+      "tasks_submitted": 794624,
+      "avg_time_ms": 180.4,
+      "min_time_ms": 180.4,
+      "max_time_ms": 180.4,
+      "tasks_per_ms": 4404.79,
+      "tasks_per_sec": 4404790.0
+    }
+  ],
+  "summary": {
+    "avg_tasks_per_ms": 6754.0668749999995,
+    "max_tasks_per_ms": 10029.38,
+    "min_tasks_per_ms": 4404.79
+  }
+}
