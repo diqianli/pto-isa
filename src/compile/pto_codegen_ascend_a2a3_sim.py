@@ -532,6 +532,28 @@ class PTOISAIncoreGenerator:
         lines.append(f"// Core Type: {core_type}")
         lines.append(f"// =============================================================================")
         lines.append("")
+        
+        # Define CCE attributes if not already defined
+        # This ensures compatibility with CCE compiler by providing proper [aicore] expansion
+        lines.append("#ifndef __gm__")
+        lines.append("#define __gm__")
+        lines.append("#endif")
+        lines.append("")
+        lines.append("#ifndef __global__")
+        lines.append("#define __global__")
+        lines.append("#endif")
+        lines.append("")
+        lines.append("// For CCE compiler, __aicore__ should expand to [aicore]")
+        lines.append("#ifndef __aicore__")
+        lines.append("#if defined(__CCE_AICORE__) || defined(__CCE__) || defined(__NPU_ARCH__)")
+        lines.append("#define __aicore__ [aicore]")
+        lines.append("#else")
+        lines.append("#define __aicore__")
+        lines.append("#endif")
+        lines.append("#endif")
+        lines.append("")
+        
+        # Include PTO headers
         lines.append('#include "pto/common/pto_tile.hpp"')
         lines.append('#include "pto/common/pto_instr.hpp"')
         lines.append("")
@@ -541,9 +563,9 @@ class PTOISAIncoreGenerator:
         # Collect tile declarations
         tile_decls = self._generate_tile_declarations(program, tile_info)
         
-        # Generate function signature
+        # Generate function signature - use AICORE macro for CCE compatibility
         params = self._generate_params(program)
-        lines.append(f"__aicore__ void {program.name}({params}) {{")
+        lines.append(f"AICORE void {program.name}({params}) {{")
         
         # Declare local tiles
         for decl in tile_decls:
@@ -564,22 +586,6 @@ class PTOISAIncoreGenerator:
                 lines.append(f"    {line}")
         
         lines.append("}")
-        lines.append("")
-        
-        # Add cycle cost function for simulation
-        lines.append(f"// Cycle cost estimation for simulation")
-        lines.append(f"extern \"C\" int64_t {program.name}_cycle_cost(void** args, int num_args) {{")
-        lines.append(f"    // Estimate based on tile sizes and operations")
-        lines.append(f"    return get_incore_cycle_cost_sim(\"{program.name}\", 8192);")
-        lines.append(f"}}")
-        lines.append("")
-        
-        # Add C wrapper for runtime
-        lines.append(f"// C wrapper for runtime task execution")
-        lines.append(f"extern \"C\" void {program.name}_wrapper(void** args, int num_args) {{")
-        wrapper_args = self._generate_wrapper_args(program)
-        lines.append(f"    {program.name}({wrapper_args});")
-        lines.append(f"}}")
         
         return "\n".join(lines)
     
@@ -587,6 +593,10 @@ class PTOISAIncoreGenerator:
                                      tile_info: Dict[str, MockTileInfo]) -> List[str]:
         """Generate Tile declarations for local buffers."""
         decls = []
+        
+        # Determine if this is a cube function (matmul uses Left/Right/Acc tiles)
+        is_cube = getattr(program, 'is_cube', False)
+        
         for name, info in tile_info.items():
             # Skip global memory references
             if name in program.memref_declarations:
@@ -596,8 +606,29 @@ class PTOISAIncoreGenerator:
             rows = info.rows
             cols = info.cols
             
-            # Use pto::Tile<T, M, N>
-            decls.append(f"Tile<{dtype}, {rows}, {cols}> {name};")
+            # Determine TileType based on function type and tile usage
+            if is_cube:
+                # For matmul: A->Left, B->Right, C->Acc
+                # Need Vec tiles for load/store and cube tiles for matmul
+                name_lower = name.lower()
+                if 'a' == name_lower or 'left' in name_lower:
+                    # A matrix: Vec tile for loading, Left tile for matmul
+                    decls.append(f"Tile<TileType::Vec, {dtype}, {rows}, {cols}> {name}_vec;")
+                    decls.append(f"Tile<TileType::Left, {dtype}, {rows}, {cols}> {name};")
+                elif 'b' == name_lower or 'right' in name_lower:
+                    # B matrix: Vec tile for loading, Right tile for matmul
+                    decls.append(f"Tile<TileType::Vec, {dtype}, {rows}, {cols}> {name}_vec;")
+                    decls.append(f"Tile<TileType::Right, {dtype}, {rows}, {cols}> {name};")
+                elif 'c' == name_lower or 'acc' in name_lower or 'out' in name_lower:
+                    # C matrix: Acc tile for matmul, Vec tile for storing
+                    decls.append(f"Tile<TileType::Acc, {dtype}, {rows}, {cols}> {name};")
+                    decls.append(f"Tile<TileType::Vec, {dtype}, {rows}, {cols}> {name}_vec;")
+                else:
+                    # Other tiles use Vec
+                    decls.append(f"Tile<TileType::Vec, {dtype}, {rows}, {cols}> {name};")
+            else:
+                # Vector functions use TileType::Vec
+                decls.append(f"Tile<TileType::Vec, {dtype}, {rows}, {cols}> {name};")
         
         return decls
     

@@ -685,7 +685,7 @@ static int verify_results(const float* expected, const float* actual, size_t cou
         float diff = expected[i] - actual[i];
         if (diff < 0) diff = -diff;
         if (diff > epsilon) {{
-            printf("  Mismatch at [%zu]: expected %.6f, got %.6f\\n", 
+            printf("  Mismatch at [%zu]: expected %.6f, got %.6f\\\\n", 
                    i, expected[i], actual[i]);
             errors++;
         }}
@@ -698,9 +698,9 @@ static int verify_results(const float* expected, const float* actual, size_t cou
 // =============================================================================
 
 int main(int argc, char** argv) {{
-    printf("=======================================================\\n");
-    printf("  PTO A2A3 Runtime Test: """ + example_name + """\\n");
-    printf("=======================================================\\n\\n");
+    printf("=======================================================\\\\n");
+    printf("  PTO A2A3 Runtime Test: """ + example_name + """\\\\n");
+    printf("=======================================================\\\\n\\\\n");
     
     int ret;
     double start_time, end_time;
@@ -708,7 +708,7 @@ int main(int argc, char** argv) {{
     // =========================================================================
     // 1. Configure Runtime
     // =========================================================================
-    printf("[1/6] Configuring runtime...\\n");
+    printf("[1/6] Configuring runtime...\\\\n");
     
     A2A3RuntimeConfig config;
     a2a3_config_init_defaults(&config);
@@ -726,41 +726,41 @@ int main(int argc, char** argv) {{
     
     config.debug_enabled = true;
     
-    printf("  Orchestration SO: %s\\n", config.orchestration_so_path);
-    printf("  InCore AIV dir:   %s\\n", config.incore_aiv_dir);
-    printf("  InCore AIC dir:   %s\\n", config.incore_aic_dir);
-    printf("  Orch threads:     %d\\n", config.num_orch_threads);
-    printf("  Dep threads:      %d\\n", config.num_dep_threads);
-    printf("  AIV workers:      %d\\n", config.num_aiv_workers);
-    printf("  AIC workers:      %d\\n", config.num_aic_workers);
+    printf("  Orchestration SO: %s\\\\n", config.orchestration_so_path);
+    printf("  InCore AIV dir:   %s\\\\n", config.incore_aiv_dir);
+    printf("  InCore AIC dir:   %s\\\\n", config.incore_aic_dir);
+    printf("  Orch threads:     %d\\\\n", config.num_orch_threads);
+    printf("  Dep threads:      %d\\\\n", config.num_dep_threads);
+    printf("  AIV workers:      %d\\\\n", config.num_aiv_workers);
+    printf("  AIC workers:      %d\\\\n", config.num_aic_workers);
     
     // =========================================================================
     // 2. Initialize Runtime
     // =========================================================================
-    printf("\\n[2/6] Initializing runtime...\\n");
+    printf("\\\\n[2/6] Initializing runtime...\\\\n");
     start_time = get_time_ms();
     
     ret = a2a3_runtime_init(&config);
     if (ret != A2A3_SUCCESS) {{
-        fprintf(stderr, "ERROR: Failed to initialize runtime: %s\\n",
+        fprintf(stderr, "ERROR: Failed to initialize runtime: %s\\\\n",
                 a2a3_runtime_error_string(ret));
         return 1;
     }}
     
     end_time = get_time_ms();
-    printf("  Runtime initialized in %.2f ms\\n", end_time - start_time);
+    printf("  Runtime initialized in %.2f ms\\\\n", end_time - start_time);
     
     // =========================================================================
     // 3. Allocate and Initialize Host Buffers
     // =========================================================================
-    printf("\\n[3/6] Allocating host buffers...\\n");
+    printf("\\\\n[3/6] Allocating host buffers...\\\\n");
     
     float* host_input = (float*)malloc(TEST_INPUT_SIZE);
     float* host_output = (float*)malloc(TEST_OUTPUT_SIZE);
     float* host_expected = (float*)malloc(TEST_OUTPUT_SIZE);  // For verification
     
     if (!host_input || !host_output || !host_expected) {{
-        fprintf(stderr, "ERROR: Failed to allocate host buffers\\n");
+        fprintf(stderr, "ERROR: Failed to allocate host buffers\\\\n");
         a2a3_runtime_finalize();
         return 1;
     }}
@@ -769,13 +769,13 @@ int main(int argc, char** argv) {{
     init_test_data(host_input, TEST_INPUT_SIZE / sizeof(float));
     memset(host_output, 0, TEST_OUTPUT_SIZE);
     
-    printf("  Input buffer:  %zu bytes\\n", (size_t)TEST_INPUT_SIZE);
-    printf("  Output buffer: %zu bytes\\n", (size_t)TEST_OUTPUT_SIZE);
+    printf("  Input buffer:  %zu bytes\\\\n", (size_t)TEST_INPUT_SIZE);
+    printf("  Output buffer: %zu bytes\\\\n", (size_t)TEST_OUTPUT_SIZE);
     
     // =========================================================================
     // 4. Copy Data to Device (copyToDevice)
     // =========================================================================
-    printf("\\n[4/6] Copying data to device...\\n");
+    printf("\\\\n[4/6] Copying data to device...\\\\n");
     start_time = get_time_ms();
     
     // Allocate device buffers
@@ -783,7 +783,7 @@ int main(int argc, char** argv) {{
     void* dev_output = a2a3_runtime_malloc(TEST_OUTPUT_SIZE);
     
     if (!dev_input || !dev_output) {{
-        fprintf(stderr, "ERROR: Failed to allocate device buffers\\n");
+        fprintf(stderr, "ERROR: Failed to allocate device buffers\\\\n");
         free(host_input);
         free(host_output);
         free(host_expected);
@@ -794,7 +794,7 @@ int main(int argc, char** argv) {{
     // Copy input to device
     ret = a2a3_runtime_copy_to_device(dev_input, host_input, TEST_INPUT_SIZE);
     if (ret != A2A3_SUCCESS) {{
-        fprintf(stderr, "ERROR: copyToDevice failed: %s\\n",
+        fprintf(stderr, "ERROR: copyToDevice failed: %s\\\\n",
                 a2a3_runtime_error_string(ret));
         a2a3_runtime_free(dev_input);
         a2a3_runtime_free(dev_output);
@@ -806,12 +806,12 @@ int main(int argc, char** argv) {{
     }}
     
     end_time = get_time_ms();
-    printf("  Data copied to device in %.2f ms\\n", end_time - start_time);
+    printf("  Data copied to device in %.2f ms\\\\n", end_time - start_time);
     
     // =========================================================================
     // 5. Execute Orchestration Function
     // =========================================================================
-    printf("\\n[5/6] Executing orchestration function...\\n");
+    printf("\\\\n[5/6] Executing orchestration function...\\\\n");
     start_time = get_time_ms();
     
     // Create user data structure to pass buffer pointers
@@ -829,7 +829,7 @@ int main(int argc, char** argv) {{
     
     ret = a2a3_runtime_execute(&user_data);
     if (ret != A2A3_SUCCESS) {{
-        fprintf(stderr, "ERROR: Execution failed: %s\\n",
+        fprintf(stderr, "ERROR: Execution failed: %s\\\\n",
                 a2a3_runtime_error_string(ret));
         a2a3_runtime_free(dev_input);
         a2a3_runtime_free(dev_output);
@@ -841,33 +841,33 @@ int main(int argc, char** argv) {{
     }}
     
     end_time = get_time_ms();
-    printf("  Execution completed in %.2f ms\\n", end_time - start_time);
+    printf("  Execution completed in %.2f ms\\\\n", end_time - start_time);
     
     // =========================================================================
     // 6. Copy Results from Device (copyFromDevice)
     // =========================================================================
-    printf("\\n[6/6] Copying results from device...\\n");
+    printf("\\\\n[6/6] Copying results from device...\\\\n");
     start_time = get_time_ms();
     
     ret = a2a3_runtime_copy_from_device(host_output, dev_output, TEST_OUTPUT_SIZE);
     if (ret != A2A3_SUCCESS) {{
-        fprintf(stderr, "ERROR: copyFromDevice failed: %s\\n",
+        fprintf(stderr, "ERROR: copyFromDevice failed: %s\\\\n",
                 a2a3_runtime_error_string(ret));
     }}
     
     end_time = get_time_ms();
-    printf("  Data copied from device in %.2f ms\\n", end_time - start_time);
+    printf("  Data copied from device in %.2f ms\\\\n", end_time - start_time);
     
     // =========================================================================
     // Print Statistics
     // =========================================================================
-    printf("\\n");
+    printf("\\\\n");
     a2a3_runtime_print_stats();
     
     // =========================================================================
     // Cleanup
     // =========================================================================
-    printf("Cleaning up...\\n");
+    printf("Cleaning up...\\\\n");
     
     a2a3_runtime_free(dev_input);
     a2a3_runtime_free(dev_output);
@@ -877,7 +877,7 @@ int main(int argc, char** argv) {{
     
     a2a3_runtime_finalize();
     
-    printf("\\nTest completed successfully!\\n");
+    printf("\\\\nTest completed successfully!\\\\n");
     return 0;
 }}
 """
@@ -993,7 +993,7 @@ def compile_ascend_a2a3(code_dir):
                 cmd = (
                     f"{{ccec_path}} -c -O3 -x cce -std=c++17 "
                     f"--cce-aicore-only --cce-aicore-arch=dav-c220-cube "
-                    f"-D__AIC__ "
+                    f"-D__AIC__ -DMEMORY_BASE "
                     f"-mllvm -cce-aicore-stack-size=0x8000 "
                     f"-mllvm -cce-aicore-function-stack-size=0x8000 "
                     f"-I{{ROOT_DIR}}/include "
@@ -1029,7 +1029,7 @@ def compile_ascend_a2a3(code_dir):
                 cmd = (
                     f"{{ccec_path}} -c -O3 -x cce -std=c++17 "
                     f"--cce-aicore-only --cce-aicore-arch=dav-c220-vec "
-                    f"-D__AIV__ "
+                    f"-D__AIV__ -DMEMORY_BASE "
                     f"-mllvm -cce-aicore-stack-size=0x8000 "
                     f"-mllvm -cce-aicore-function-stack-size=0x8000 "
                     f"-I{{ROOT_DIR}}/include "
@@ -1073,6 +1073,10 @@ def compile_ascend_a2a3(code_dir):
         f"-I{{RUNTIME_DIR}}",
         f"-I{{code_dir}}",
     ]
+    
+    # Add CANN SDK include path if available
+    if cann_available:
+        include_paths.append(f"-I{{ascend_home}}/include")
     
     # Find all runtime source files needed
     runtime_sources = [
