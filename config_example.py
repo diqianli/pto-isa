@@ -627,8 +627,9 @@ def generate_test_program_template(code_dir, example_name):
     5. Copies results back (copyFromDevice)
     6. Cleans up the runtime
     """
-    test_program = f'''/**
- * PTO Runtime Test Program - {example_name}
+    # Use double-quoted triple string with escaped braces for C code
+    test_program = """/**
+ * PTO Runtime Test Program - """ + example_name + """
  * 
  * Auto-generated test entry point for A2A3 Runtime.
  * This program demonstrates the complete runtime workflow:
@@ -698,7 +699,7 @@ static int verify_results(const float* expected, const float* actual, size_t cou
 
 int main(int argc, char** argv) {{
     printf("=======================================================\\n");
-    printf("  PTO A2A3 Runtime Test: {example_name}\\n");
+    printf("  PTO A2A3 Runtime Test: """ + example_name + """\\n");
     printf("=======================================================\\n\\n");
     
     int ret;
@@ -879,7 +880,7 @@ int main(int argc, char** argv) {{
     printf("\\nTest completed successfully!\\n");
     return 0;
 }}
-'''
+"""
     
     # Write the test program
     test_file = os.path.join(code_dir, "test_program.c")
