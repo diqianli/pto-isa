@@ -330,12 +330,103 @@ void a2a3_unload_all_incore_binaries(void) {
         if (g_incore_binaries[i].is_loaded && g_incore_binaries[i].binary_data) {
             free(g_incore_binaries[i].binary_data);
         }
+#ifdef CANN_SDK_AVAILABLE
+        // Free device memory if allocated
+        if (g_incore_binaries[i].device_addr != 0) {
+            aclrtFree((void*)g_incore_binaries[i].device_addr);
+        }
+#endif
         g_incore_binaries[i].is_loaded = false;
         g_incore_binaries[i].binary_data = NULL;
         g_incore_binaries[i].binary_size = 0;
         g_incore_binaries[i].device_addr = 0;
     }
     g_incore_binary_count = 0;
+}
+
+// =============================================================================
+// Device Memory Operations
+// =============================================================================
+
+#ifdef CANN_SDK_AVAILABLE
+#include <acl/acl.h>
+#else
+// Stub definitions for compilation without CANN SDK
+static inline int aclrtFree(void* ptr) { (void)ptr; return 0; }
+static inline int aclrtMalloc(void** ptr, size_t size, int flag) { 
+    *ptr = malloc(size); 
+    (void)flag;
+    return (*ptr != NULL) ? 0 : -1; 
+}
+static inline int aclrtMemcpy(void* dst, size_t dstMax, const void* src, size_t count, int kind) {
+    (void)dstMax; (void)kind;
+    memcpy(dst, src, count);
+    return 0;
+}
+#define ACL_MEM_MALLOC_HUGE_FIRST 0
+#define ACL_MEMCPY_HOST_TO_DEVICE 1
+#define ACL_SUCCESS 0
+#endif
+
+int a2a3_copy_incore_binaries_to_device(void) {
+    int copied = 0;
+    
+    for (int i = 0; i < g_incore_binary_count; i++) {
+        A2A3InCoreBinaryEntry* entry = &g_incore_binaries[i];
+        
+        if (!entry->is_loaded || !entry->binary_data || entry->binary_size == 0) {
+            continue;
+        }
+        
+        // Skip if already copied
+        if (entry->device_addr != 0) {
+            copied++;
+            continue;
+        }
+        
+#ifdef CANN_SDK_AVAILABLE
+        // Allocate device GM memory
+        void* dev_ptr = NULL;
+        aclError rc = aclrtMalloc(&dev_ptr, entry->binary_size, ACL_MEM_MALLOC_HUGE_FIRST);
+        if (rc != ACL_SUCCESS) {
+            fprintf(stderr, "[A2A3 Binary Loader] Error: Failed to allocate device memory for %s: %d\n",
+                    entry->func_name, rc);
+            continue;
+        }
+        
+        // Copy binary to device
+        rc = aclrtMemcpy(dev_ptr, entry->binary_size, entry->binary_data, 
+                         entry->binary_size, ACL_MEMCPY_HOST_TO_DEVICE);
+        if (rc != ACL_SUCCESS) {
+            fprintf(stderr, "[A2A3 Binary Loader] Error: Failed to copy %s to device: %d\n",
+                    entry->func_name, rc);
+            aclrtFree(dev_ptr);
+            continue;
+        }
+        
+        entry->device_addr = (uint64_t)dev_ptr;
+        printf("[A2A3 Binary Loader] Copied %s to device: 0x%lx (%zu bytes)\n",
+               entry->func_name, entry->device_addr, entry->binary_size);
+        copied++;
+#else
+        // Stub mode: use host address as device address (for testing)
+        entry->device_addr = (uint64_t)entry->binary_data;
+        printf("[A2A3 Binary Loader] Stub mode: %s -> 0x%lx (%zu bytes)\n",
+               entry->func_name, entry->device_addr, entry->binary_size);
+        copied++;
+#endif
+    }
+    
+    printf("[A2A3 Binary Loader] Copied %d binaries to device\n", copied);
+    return copied;
+}
+
+uint64_t a2a3_get_incore_device_addr(const char* func_name) {
+    A2A3InCoreBinaryEntry* entry = a2a3_lookup_incore_binary(func_name);
+    if (entry && entry->device_addr != 0) {
+        return entry->device_addr;
+    }
+    return 0;
 }
 
 // =============================================================================

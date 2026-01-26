@@ -105,6 +105,25 @@ A2A3InCoreBinaryEntry* a2a3_lookup_incore_binary(const char* func_name);
 int a2a3_get_incore_binary_count(void);
 
 /**
+ * Copy all loaded InCore binaries to device GM memory.
+ * 
+ * This function uses CANN API to allocate device memory and copy
+ * the loaded binary data. After this call, device_addr in each
+ * entry will contain the device GM address.
+ * 
+ * @return Number of binaries copied, or negative on failure
+ */
+int a2a3_copy_incore_binaries_to_device(void);
+
+/**
+ * Get device address for an InCore function.
+ * 
+ * @param func_name  Function name
+ * @return Device GM address, or 0 if not found or not copied to device
+ */
+uint64_t a2a3_get_incore_device_addr(const char* func_name);
+
+/**
  * Unload all InCore binaries and free memory.
  */
 void a2a3_unload_all_incore_binaries(void);
