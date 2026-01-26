@@ -35,8 +35,17 @@
 // Task Execution (Hardware Implementation)
 // =============================================================================
 
+// Forward declarations for binary loader (to avoid include dependency)
+// These are defined in a2a3_binary_loader.c and will be linked at runtime
+typedef struct A2A3InCoreBinaryEntry A2A3InCoreBinaryEntry;
+extern uint64_t a2a3_get_incore_device_addr(const char* func_name) __attribute__((weak));
+extern A2A3InCoreBinaryEntry* a2a3_lookup_incore_binary(const char* func_name) __attribute__((weak));
+
 #ifdef CANN_SDK_AVAILABLE
 #include <acl/acl.h>
+
+// Static flag to track if we've warned about NPU execution
+static int s_npu_warning_shown = 0;
 
 void a2a3_core_execute_task(PTORuntime* rt, int32_t task_id, int32_t worker_id) {
     int32_t slot = PTO_TASK_SLOT(task_id);
@@ -56,25 +65,56 @@ void a2a3_core_execute_task(PTORuntime* rt, int32_t task_id, int32_t worker_id) 
         args[arg_idx++] = (void*)(base_ptr + offset);
     }
     
-    // Execute on NPU via CANN kernel launch
+    // Priority 1: Use function pointer if available (from .so loading)
     if (task->func_ptr) {
-        // TODO: Replace with actual CANN kernel launch
-        // aclrtLaunchKernel(...);
         PTOInCoreFunc func = (PTOInCoreFunc)task->func_ptr;
         func(args, task->num_args);
+        return;
     }
     
-    // Synchronize with NPU
-    aclrtSynchronizeStream(NULL);
+    // Priority 2: Check if binary is loaded (from .o file)
+    // For real NPU execution, we need to use the NPU launcher
+    // Note: a2a3_get_incore_device_addr is a weak symbol - check if it's available
+    uint64_t device_addr = 0;
+    if (a2a3_get_incore_device_addr) {
+        device_addr = a2a3_get_incore_device_addr(task->func_name);
+    }
+    if (device_addr != 0) {
+        // Binary is loaded but we can't execute it in CPU worker threads
+        // Real execution requires launching AICore kernel via CANN API
+        if (!s_npu_warning_shown) {
+            printf("\n[A2A3 Core HW] ================================================\n");
+            printf("[A2A3 Core HW] WARNING: InCore function '%s' is loaded as .o binary\n", task->func_name);
+            printf("[A2A3 Core HW] .o files are AICore binaries and cannot be executed by CPU workers.\n");
+            printf("[A2A3 Core HW] \n");
+            printf("[A2A3 Core HW] For real NPU execution, the task graph should be:\n");
+            printf("[A2A3 Core HW]   1. Built by orchestration function\n");
+            printf("[A2A3 Core HW]   2. Copied to device memory\n");
+            printf("[A2A3 Core HW]   3. Executed by AICPU + AICore kernels\n");
+            printf("[A2A3 Core HW] \n");
+            printf("[A2A3 Core HW] Current architecture uses CPU workers for testing.\n");
+            printf("[A2A3 Core HW] Task execution is SKIPPED. Output will be zeros.\n");
+            printf("[A2A3 Core HW] ================================================\n\n");
+            s_npu_warning_shown = 1;
+        }
+        // Skip execution - the actual computation would be done on NPU
+        return;
+    }
+    
+    // No function available
+    DEBUG_PRINT("[A2A3 Core HW] WARNING: No executable for task %s\n", task->func_name);
 }
 
 #else /* No CANN SDK - stub implementation for compilation testing */
+
+// Static flag to track if we've warned about missing functions
+static int s_stub_warning_shown = 0;
 
 void a2a3_core_execute_task(PTORuntime* rt, int32_t task_id, int32_t worker_id) {
     int32_t slot = PTO_TASK_SLOT(task_id);
     PendingTask* task = &rt->pend_task[slot];
     
-    DEBUG_PRINT("[A2A3 Core HW STUB] Worker %d executing task %d: %s\n", 
+    DEBUG_PRINT("[A2A3 Core STUB] Worker %d executing task %d: %s\n", 
                 worker_id, task_id, task->func_name);
     
     // Build argument array
@@ -88,11 +128,40 @@ void a2a3_core_execute_task(PTORuntime* rt, int32_t task_id, int32_t worker_id) 
         args[arg_idx++] = (void*)(base_ptr + offset);
     }
     
-    // Execute function pointer directly (for testing without hardware)
+    // Priority 1: Use function pointer if available (from .so loading)
     if (task->func_ptr) {
         PTOInCoreFunc func = (PTOInCoreFunc)task->func_ptr;
         func(args, task->num_args);
+        return;
     }
+    
+    // Priority 2: Check if binary is loaded
+    // In stub mode without CANN SDK, we cannot execute .o files
+    // Note: a2a3_lookup_incore_binary is a weak symbol - check if it's available
+    int binary_loaded = 0;
+    if (a2a3_lookup_incore_binary) {
+        A2A3InCoreBinaryEntry* entry = a2a3_lookup_incore_binary(task->func_name);
+        binary_loaded = (entry && entry->is_loaded);
+    }
+    if (binary_loaded) {
+        if (!s_stub_warning_shown) {
+            printf("\n[A2A3 Core STUB] ================================================\n");
+            printf("[A2A3 Core STUB] InCore functions loaded as .o binaries (AICore code).\n");
+            printf("[A2A3 Core STUB] These cannot be executed on CPU.\n");
+            printf("[A2A3 Core STUB] \n");
+            printf("[A2A3 Core STUB] Options to get actual execution:\n");
+            printf("[A2A3 Core STUB]   1. Run on real Ascend hardware with NPU launcher\n");
+            printf("[A2A3 Core STUB]   2. Use ascend_a2a3_sim platform (compiles to .so)\n");
+            printf("[A2A3 Core STUB] \n");
+            printf("[A2A3 Core STUB] Task execution is SKIPPED. Output will be zeros.\n");
+            printf("[A2A3 Core STUB] ================================================\n\n");
+            s_stub_warning_shown = 1;
+        }
+        return;
+    }
+    
+    // No function available
+    DEBUG_PRINT("[A2A3 Core STUB] WARNING: No executable for task %s\n", task->func_name);
 }
 
 #endif /* CANN_SDK_AVAILABLE */
