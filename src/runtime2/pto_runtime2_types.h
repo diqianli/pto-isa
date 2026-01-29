@@ -262,13 +262,15 @@ typedef void (*PTO2InCoreFunc)(void** args, int32_t num_args);
 
 /**
  * Pause instruction for spin-wait loops
+ * Include sched_yield() to prevent CPU starvation of other threads
  */
+#include <sched.h>
 #if defined(__aarch64__)
-    #define PTO2_SPIN_PAUSE()         __asm__ __volatile__("yield" ::: "memory")
+    #define PTO2_SPIN_PAUSE()         do { __asm__ __volatile__("yield" ::: "memory"); sched_yield(); } while(0)
 #elif defined(__x86_64__)
-    #define PTO2_SPIN_PAUSE()         __builtin_ia32_pause()
+    #define PTO2_SPIN_PAUSE()         do { __builtin_ia32_pause(); sched_yield(); } while(0)
 #else
-    #define PTO2_SPIN_PAUSE()         ((void)0)
+    #define PTO2_SPIN_PAUSE()         sched_yield()
 #endif
 
 /**
@@ -289,5 +291,148 @@ typedef void (*PTO2InCoreFunc)(void** args, int32_t num_args);
  */
 #define PTO2_EXCHANGE(ptr, val) \
     __atomic_exchange_n(ptr, val, __ATOMIC_ACQ_REL)
+
+// =============================================================================
+// Multi-Threading Support
+// =============================================================================
+
+#include <pthread.h>
+
+// Maximum number of worker threads
+#define PTO2_MAX_WORKERS          128
+#define PTO2_MAX_CUBE_WORKERS     64
+#define PTO2_MAX_VECTOR_WORKERS   64
+
+// Forward declarations
+struct PTO2Runtime;
+struct PTO2SchedulerState;
+
+/**
+ * Worker context for each worker thread
+ */
+typedef struct {
+    int32_t         worker_id;        // Unique worker ID
+    int32_t         worker_type;      // PTO2WorkerType (CUBE, VECTOR, etc.)
+    struct PTO2Runtime* runtime;      // Runtime reference
+    
+    // Thread control
+    pthread_t       thread;           // Thread handle
+    volatile bool   shutdown;         // Shutdown signal
+    
+    // Statistics
+    int64_t         tasks_executed;   // Number of tasks executed
+    int64_t         total_cycles;     // Total execution cycles
+    int64_t         total_stall_cycles; // Cycles spent waiting
+    
+    // Current task (for tracing)
+    int32_t         current_task_id;  // Currently executing task (-1 if idle)
+    int64_t         task_start_cycle; // When current task started
+    
+} PTO2WorkerContext;
+
+/**
+ * Completion queue entry for worker->scheduler communication
+ */
+typedef struct {
+    int32_t task_id;                  // Completed task ID
+    int32_t worker_id;                // Worker that completed the task
+    int64_t start_cycle;              // When task started
+    int64_t end_cycle;                // When task completed
+} PTO2CompletionEntry;
+
+/**
+ * Completion queue (lock-free SPSC or MPSC)
+ */
+typedef struct {
+    PTO2CompletionEntry* entries;     // Circular buffer
+    int32_t capacity;                 // Queue capacity
+    volatile int32_t head;            // Consumer reads from here
+    volatile int32_t tail;            // Producers write here
+    pthread_mutex_t mutex;            // For MPSC synchronization
+} PTO2CompletionQueue;
+
+/**
+ * Thread context for managing all runtime threads
+ */
+typedef struct {
+    // Orchestrator thread
+    pthread_t orchestrator_thread;
+    void* (*orchestrator_func)(void*);
+    void* orchestrator_arg;
+    volatile bool orchestrator_done;
+    
+    // Scheduler thread
+    pthread_t scheduler_thread;
+    volatile bool scheduler_running;
+    
+    // Worker threads
+    PTO2WorkerContext workers[PTO2_MAX_WORKERS];
+    int32_t num_cube_workers;
+    int32_t num_vector_workers;
+    int32_t num_workers;              // Total workers
+    
+    // Ready queue synchronization (per worker type)
+    pthread_mutex_t ready_mutex[PTO2_NUM_WORKER_TYPES];
+    pthread_cond_t  ready_cond[PTO2_NUM_WORKER_TYPES];
+    
+    // Completion queue (workers -> scheduler)
+    PTO2CompletionQueue completion_queue;
+    pthread_cond_t completion_cond;   // Signal scheduler when completions ready
+    
+    // Global shutdown signal
+    volatile bool shutdown;
+    
+    // All-done signaling
+    pthread_mutex_t done_mutex;
+    pthread_cond_t  all_done_cond;
+    volatile bool   all_done;
+    
+    // Cycle counter for simulation (atomic)
+    volatile int64_t global_cycle;
+    
+    // Per-task end cycles for dependency tracking in simulation
+    // task_end_cycles[task_id % TASK_WINDOW_SIZE] = end_cycle
+    volatile int64_t* task_end_cycles;
+    int32_t task_end_cycles_capacity;
+    pthread_mutex_t task_end_mutex;   // Protect task_end_cycles updates
+    
+    // Per-worker current cycle (for proper scheduling)
+    volatile int64_t* worker_current_cycle;
+    
+} PTO2ThreadContext;
+
+/**
+ * Orchestrator context (passed to orchestrator thread)
+ */
+typedef struct {
+    struct PTO2Runtime* runtime;
+    void (*user_func)(struct PTO2Runtime*, void*);
+    void* user_arg;
+} PTO2OrchestratorContext;
+
+/**
+ * Scheduler context (passed to scheduler thread)
+ */
+typedef struct {
+    struct PTO2Runtime* runtime;
+    struct PTO2SchedulerState* scheduler;
+    PTO2ThreadContext* thread_ctx;
+} PTO2SchedulerContext;
+
+// =============================================================================
+// Task Parameter Convenience Macros
+// =============================================================================
+
+/**
+ * Convenience macros for creating task parameters
+ */
+#define PTO2_INPUT(buf, tile_idx, sz) \
+    (PTO2TaskParam){ .type = PTO2_PARAM_INPUT, .buffer = (buf), .tile_index = (tile_idx), .size = (sz) }
+
+#define PTO2_OUTPUT(buf, tile_idx, sz) \
+    (PTO2TaskParam){ .type = PTO2_PARAM_OUTPUT, .buffer = (buf), .tile_index = (tile_idx), .size = (sz) }
+
+#define PTO2_INOUT(buf, tile_idx, sz) \
+    (PTO2TaskParam){ .type = PTO2_PARAM_INOUT, .buffer = (buf), .tile_index = (tile_idx), .size = (sz) }
 
 #endif // PTO_RUNTIME2_TYPES_H

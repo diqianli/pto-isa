@@ -94,6 +94,9 @@ void pto_runtime_init(PTORuntime* rt) {
     rt->total_tasks_scheduled = 0;
     rt->total_tasks_completed = 0;
     
+    // Initialize flow control statistics
+    memset(&rt->flow_stats, 0, sizeof(rt->flow_stats));
+    
     // Initialize thread synchronization primitives
     pthread_mutex_init(&rt->queue_mutex, NULL);
     pthread_mutex_init(&rt->task_mutex, NULL);
@@ -101,7 +104,13 @@ void pto_runtime_init(PTORuntime* rt) {
     pthread_cond_init(&rt->all_done, NULL);
     pthread_cond_init(&rt->vector_queue_not_empty, NULL);
     pthread_cond_init(&rt->cube_queue_not_empty, NULL);
+    
+    // Initialize flow control condition variables
     pthread_cond_init(&rt->window_not_full, NULL);
+    pthread_cond_init(&rt->tensormap_not_full, NULL);
+    pthread_cond_init(&rt->deplist_not_full, NULL);
+    pthread_cond_init(&rt->heap_not_full, NULL);
+    pthread_cond_init(&rt->ready_queue_not_full, NULL);
     
     // Initialize worker state
     rt->num_workers = 0;
@@ -141,7 +150,13 @@ void pto_runtime_shutdown(PTORuntime* rt) {
     pthread_cond_destroy(&rt->all_done);
     pthread_cond_destroy(&rt->vector_queue_not_empty);
     pthread_cond_destroy(&rt->cube_queue_not_empty);
+    
+    // Destroy flow control condition variables
     pthread_cond_destroy(&rt->window_not_full);
+    pthread_cond_destroy(&rt->tensormap_not_full);
+    pthread_cond_destroy(&rt->deplist_not_full);
+    pthread_cond_destroy(&rt->heap_not_full);
+    pthread_cond_destroy(&rt->ready_queue_not_full);
     
     DEBUG_PRINT("[PTO Runtime] Shutdown (scheduled=%lld, completed=%lld)\n",
            (long long)rt->total_tasks_scheduled,
@@ -213,6 +228,9 @@ void pto_runtime_reset(PTORuntime* rt) {
     // Reset statistics
     rt->total_tasks_scheduled = 0;
     rt->total_tasks_completed = 0;
+    
+    // Reset flow control statistics
+    memset(&rt->flow_stats, 0, sizeof(rt->flow_stats));
 
     // Reset scope stack
     rt->scope_stack_top = -1;
@@ -322,12 +340,44 @@ int32_t pto_tensormap_lookup(PTORuntime* rt, TensorRegion* region) {
     return -1;
 }
 
+// Helper to get time in nanoseconds
+static inline int64_t pto_get_time_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
 void pto_tensormap_insert(PTORuntime* rt, TensorRegion* region, int32_t task_id) {
     TensorMap* tm = &rt->tensor_map;
     tm->last_task_alive = rt->last_task_alive;
 
     int32_t entry_offset = tm->pool_head;
     TensorMapEntry* entry = &tm->entry_pool[entry_offset];
+    
+    // Flow control: check if entry is still valid (producer task still alive)
+    // If valid, we need to wait for scheduler to advance last_task_alive
+    if (entry->in_bucket && entry->producer_task_id >= rt->last_task_alive) {
+        // Entry still in use - wait for space (only in threaded mode)
+        if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
+            int64_t stall_start = pto_get_time_ns();
+            rt->flow_stats.current_stall = PTO_STALL_TENSORMAP_POOL;
+            rt->flow_stats.tensormap_pool_stalls++;
+            
+            DEBUG_PRINT("[Flow Control] TensorMap pool full, waiting... (pool_head=%d, producer=%d, last_alive=%d)\n",
+                       tm->pool_head, entry->producer_task_id, rt->last_task_alive);
+            
+            // Wait until entry becomes stale (producer_task_id < last_task_alive)
+            while (entry->in_bucket && entry->producer_task_id >= rt->last_task_alive) {
+                pthread_cond_wait(&rt->tensormap_not_full, &rt->task_mutex);
+                // Update last_task_alive after wakeup
+                tm->last_task_alive = rt->last_task_alive;
+            }
+            
+            rt->flow_stats.tensormap_pool_stall_ns += pto_get_time_ns() - stall_start;
+            rt->flow_stats.current_stall = PTO_STALL_NONE;
+        }
+    }
+    
     tm->pool_head = (tm->pool_head + 1) % PTO_TENSORMAP_POOL_SIZE;
 
     if (entry->in_bucket) {
@@ -345,6 +395,12 @@ void pto_tensormap_insert(PTORuntime* rt, TensorRegion* region, int32_t task_id)
     int32_t task_slot = PTO_TASK_SLOT(task_id);
     entry->next_in_task = tm->task_entry_head[task_slot];
     tm->task_entry_head[task_slot] = entry_offset;
+    
+    // Update high water mark
+    int32_t current_usage = tm->pool_head;  // Simplified: actual usage tracking would be more complex
+    if (current_usage > rt->flow_stats.tensormap_pool_hwm) {
+        rt->flow_stats.tensormap_pool_hwm = current_usage;
+    }
 }
 
 void pto_tensormap_clear(PTORuntime* rt) {
@@ -399,18 +455,40 @@ static int32_t pto_dep_list_alloc_one_locked(PTORuntime* rt) {
     int32_t next = pto_dep_list_next(rt->dep_list_top);
     if (next == rt->dep_list_tail) {
         // Pool full: stall in execute/simulate; abort in dump/benchmark.
-        while (next == rt->dep_list_tail &&
-               (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE)) {
-            pthread_cond_wait(&rt->window_not_full, &rt->task_mutex);
-            next = pto_dep_list_next(rt->dep_list_top);
+        if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
+            int64_t stall_start = pto_get_time_ns();
+            rt->flow_stats.current_stall = PTO_STALL_DEPLIST_POOL;
+            rt->flow_stats.deplist_pool_stalls++;
+            
+            DEBUG_PRINT("[Flow Control] DepList pool full, waiting... (top=%d, tail=%d)\n",
+                       rt->dep_list_top, rt->dep_list_tail);
+            
+            while (next == rt->dep_list_tail) {
+                pthread_cond_wait(&rt->deplist_not_full, &rt->task_mutex);
+                next = pto_dep_list_next(rt->dep_list_top);
+            }
+            
+            rt->flow_stats.deplist_pool_stall_ns += pto_get_time_ns() - stall_start;
+            rt->flow_stats.current_stall = PTO_STALL_NONE;
         }
+        
         if (next == rt->dep_list_tail) {
-            fprintf(stderr, "[PTO Runtime] ERROR: DepList pool full\n");
+            fprintf(stderr, "[PTO Runtime] ERROR: DepList pool full (top=%d, tail=%d)\n",
+                   rt->dep_list_top, rt->dep_list_tail);
             return 0;
         }
     }
     int32_t off = rt->dep_list_top;
     rt->dep_list_top = next;
+    
+    // Update high water mark
+    int32_t current_usage = (rt->dep_list_top >= rt->dep_list_tail) 
+        ? (rt->dep_list_top - rt->dep_list_tail)
+        : (PTO_DEP_LIST_POOL_SIZE - rt->dep_list_tail + rt->dep_list_top);
+    if (current_usage > rt->flow_stats.deplist_pool_hwm) {
+        rt->flow_stats.deplist_pool_hwm = current_usage;
+    }
+    
     return off;
 }
 
@@ -422,6 +500,9 @@ static void* pto_heap_alloc_locked(PTORuntime* rt, int32_t size_bytes) {
     if (!rt->heap_base || rt->heap_size <= 0) return NULL;
     size_bytes = pto_align_up_i32(size_bytes, 64);
     if (size_bytes <= 0 || size_bytes >= rt->heap_size) return NULL;
+    
+    bool stall_recorded = false;
+    int64_t stall_start = 0;
 
     while (1) {
         int32_t top = rt->heap_top;
@@ -434,11 +515,30 @@ static void* pto_heap_alloc_locked(PTORuntime* rt, int32_t size_bytes) {
                 top += size_bytes;
                 if (top == rt->heap_size) top = 0;
                 rt->heap_top = top;
+                
+                // Update high water mark
+                if (top > rt->flow_stats.heap_hwm) {
+                    rt->flow_stats.heap_hwm = top;
+                }
+                
+                // Record stall time if we were waiting
+                if (stall_recorded) {
+                    rt->flow_stats.heap_ring_stall_ns += pto_get_time_ns() - stall_start;
+                    rt->flow_stats.current_stall = PTO_STALL_NONE;
+                }
+                
                 return ptr;
             }
             // wrap to 0
             if (tail > size_bytes) {
                 rt->heap_top = size_bytes;
+                
+                // Record stall time if we were waiting
+                if (stall_recorded) {
+                    rt->flow_stats.heap_ring_stall_ns += pto_get_time_ns() - stall_start;
+                    rt->flow_stats.current_stall = PTO_STALL_NONE;
+                }
+                
                 return rt->heap_base;
             }
         } else {
@@ -446,12 +546,36 @@ static void* pto_heap_alloc_locked(PTORuntime* rt, int32_t size_bytes) {
             if (gap > size_bytes) {
                 void* ptr = rt->heap_base + top;
                 rt->heap_top = top + size_bytes;
+                
+                // Update high water mark
+                if (rt->heap_top > rt->flow_stats.heap_hwm) {
+                    rt->flow_stats.heap_hwm = rt->heap_top;
+                }
+                
+                // Record stall time if we were waiting
+                if (stall_recorded) {
+                    rt->flow_stats.heap_ring_stall_ns += pto_get_time_ns() - stall_start;
+                    rt->flow_stats.current_stall = PTO_STALL_NONE;
+                }
+                
                 return ptr;
             }
         }
 
+        // No space available - need to wait
         if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
-            pthread_cond_wait(&rt->window_not_full, &rt->task_mutex);
+            // Record stall on first iteration
+            if (!stall_recorded) {
+                stall_start = pto_get_time_ns();
+                rt->flow_stats.current_stall = PTO_STALL_HEAP_RING;
+                rt->flow_stats.heap_ring_stalls++;
+                stall_recorded = true;
+                
+                DEBUG_PRINT("[Flow Control] Heap full, waiting... (top=%d, tail=%d, need=%d)\n",
+                           rt->heap_top, rt->heap_tail, size_bytes);
+            }
+            
+            pthread_cond_wait(&rt->heap_not_full, &rt->task_mutex);
             continue;
         }
         return NULL;
@@ -547,7 +671,11 @@ void pto_scope_end(PTORuntime* rt) {
 
     bool window_advanced = pto_advance_last_task_alive_locked(rt);
     if (window_advanced) {
+        // Broadcast all flow control conditions - resources may have been freed
         pthread_cond_broadcast(&rt->window_not_full);
+        pthread_cond_broadcast(&rt->tensormap_not_full);
+        pthread_cond_broadcast(&rt->deplist_not_full);
+        pthread_cond_broadcast(&rt->heap_not_full);
     }
     pthread_mutex_unlock(&rt->task_mutex);
 }
@@ -579,17 +707,31 @@ int32_t pto_task_alloc_impl(PTORuntime* rt, const char* func_name, void* func_pt
                 return -1;
                 
             case PTO_MODE_EXECUTE:
-            case PTO_MODE_SIMULATE:
+            case PTO_MODE_SIMULATE: {
                 // Execute/simulate mode: wait for workers to complete tasks
+                int64_t stall_start = pto_get_time_ns();
+                rt->flow_stats.current_stall = PTO_STALL_TASK_RING;
+                rt->flow_stats.task_ring_stalls++;
+                
+                DEBUG_PRINT("[Flow Control] Task window full, waiting... (oldest=%d, next=%d)\n",
+                       rt->last_task_alive, rt->next_task_id);
+                
                 pthread_mutex_lock(&rt->task_mutex);
                 while ((rt->next_task_id - rt->last_task_alive) >= PTO_TASK_WINDOW_SIZE) {
-                    DEBUG_PRINT("[PTO Runtime] Window full, waiting... (oldest=%d, next=%d)\n",
-                           rt->last_task_alive, rt->next_task_id);
                     pthread_cond_wait(&rt->window_not_full, &rt->task_mutex);
                 }
                 pthread_mutex_unlock(&rt->task_mutex);
+                
+                rt->flow_stats.task_ring_stall_ns += pto_get_time_ns() - stall_start;
+                rt->flow_stats.current_stall = PTO_STALL_NONE;
                 break;
+            }
         }
+    }
+    
+    // Update task ring high water mark
+    if (tasks_in_flight > rt->flow_stats.task_ring_hwm) {
+        rt->flow_stats.task_ring_hwm = tasks_in_flight;
     }
     
     // Allocate task ID and get slot in window
@@ -676,6 +818,7 @@ void pto_task_add_input(PTORuntime* rt, int32_t task_id,
     TaskArg* arg = &task->args[task->num_args++];
     arg->region = region;
     arg->is_output = false;
+    arg->tensor_ref = NULL;  // Inputs don't have writeback
     
     // Look up producer in TensorMap and wire dependencies.
     pthread_mutex_lock(&rt->task_mutex);
@@ -756,6 +899,7 @@ void pto_task_add_output(PTORuntime* rt, int32_t task_id,
     TaskArg* arg = &task->args[task->num_args++];
     arg->region = region;
     arg->is_output = true;
+    arg->tensor_ref = NULL;  // Mode A: No writeback needed
 
     // Record output arg index; output regions are registered in TensorMap on submit.
     if (task->num_outputs < PTO_MAX_ARGS) {
@@ -764,6 +908,52 @@ void pto_task_add_output(PTORuntime* rt, int32_t task_id,
     
     DEBUG_PRINT("[PTO Runtime] Task %d output (tensor=%p, offset=[%lld,%lld], shape=[%lld,%lld])\n",
            task_id, tensor, (long long)row_off, (long long)col_off,
+           (long long)rows, (long long)cols);
+}
+
+void pto_task_add_output_ref(PTORuntime* rt, int32_t task_id,
+                             void** tensor_ref, int64_t row_off, int64_t col_off,
+                             int64_t rows, int64_t cols) {
+    if (task_id < 0 || task_id >= rt->next_task_id) {
+        fprintf(stderr, "[PTO Runtime] ERROR: Invalid task_id %d\n", task_id);
+        return;
+    }
+    
+    if (tensor_ref == NULL) {
+        fprintf(stderr, "[PTO Runtime] ERROR: tensor_ref is NULL for task %d\n", task_id);
+        return;
+    }
+    
+    PendingTask* task = &rt->pend_task[PTO_TASK_SLOT(task_id)];
+    
+    if (task->num_args >= PTO_MAX_ARGS) {
+        fprintf(stderr, "[PTO Runtime] ERROR: Too many arguments for task %d\n", task_id);
+        return;
+    }
+    
+    // For Mode B: Set raw_tensor to NULL to trigger allocation in prepare_submit
+    // Store tensor_ref so we can write back the allocated address
+    TensorRegion region = {
+        .raw_tensor = NULL,     // Will be allocated during prepare_submit
+        .row_offset = row_off,
+        .col_offset = col_off,
+        .rows = rows,
+        .cols = cols
+    };
+    
+    // Add argument
+    TaskArg* arg = &task->args[task->num_args++];
+    arg->region = region;
+    arg->is_output = true;
+    arg->tensor_ref = tensor_ref;  // Store the reference for writeback
+    
+    // Record output arg index; output regions are registered in TensorMap on submit.
+    if (task->num_outputs < PTO_MAX_ARGS) {
+        task->output_arg_index[task->num_outputs++] = task->num_args - 1;
+    }
+    
+    DEBUG_PRINT("[PTO Runtime] Task %d output_ref (tensor_ref=%p, offset=[%lld,%lld], shape=[%lld,%lld])\n",
+           task_id, (void*)tensor_ref, (long long)row_off, (long long)col_off,
            (long long)rows, (long long)cols);
 }
 
@@ -824,9 +1014,17 @@ bool pto_task_prepare_submit(PTORuntime* rt, int32_t task_id) {
             if (arg->region.raw_tensor == NULL) {
                 int32_t bytes = (int32_t)(arg->region.rows * arg->region.cols * (int64_t)sizeof(float));
                 bytes = pto_align_up_i32(bytes, 64);
-                arg->region.raw_tensor = (uint8_t*)base + off;
+                void* allocated_addr = (uint8_t*)base + off;
+                arg->region.raw_tensor = allocated_addr;
                 task->output_offsets[i] = off;
                 off += bytes;
+                
+                // Mode B: Write allocated address back to caller's reference
+                if (arg->tensor_ref != NULL) {
+                    *(arg->tensor_ref) = allocated_addr;
+                    DEBUG_PRINT("[PTO Runtime] Task %d: Mode B writeback *%p = %p\n",
+                           task_id, (void*)arg->tensor_ref, allocated_addr);
+                }
             } else {
                 task->output_offsets[i] = -1;
             }
@@ -1494,6 +1692,13 @@ void pto_simulate_all(PTORuntime* rt) {
         NUM_WORKERS = PTO_MAX_WORKERS;
     }
     
+    // Initialize trace for simulation
+    if (rt->dual_queue_mode) {
+        pto_trace_init_dual(rt->num_vector_workers, rt->num_cube_workers);
+    } else {
+        pto_trace_init(NUM_WORKERS);
+    }
+    
     printf("\n[PTO Simulator] ======== Starting Cycle-Accurate Simulation ========\n");
     printf("  Total tasks: %lld\n", (long long)rt->total_tasks_scheduled);
     if (rt->dual_queue_mode) {
@@ -1691,4 +1896,176 @@ void pto_simulate_all(PTORuntime* rt) {
     
     rt->total_tasks_completed = tasks_completed;
     free(remaining);
+}
+
+// =============================================================================
+// Flow Control Statistics API
+// =============================================================================
+
+const char* pto_stall_reason_name(PTOStallReason reason) {
+    switch (reason) {
+        case PTO_STALL_NONE:           return "none";
+        case PTO_STALL_TASK_RING:      return "task_ring";
+        case PTO_STALL_TENSORMAP_POOL: return "tensormap_pool";
+        case PTO_STALL_DEPLIST_POOL:   return "deplist_pool";
+        case PTO_STALL_HEAP_RING:      return "heap_ring";
+        case PTO_STALL_READY_QUEUE:    return "ready_queue";
+        default:                        return "unknown";
+    }
+}
+
+const PTOFlowControlStats* pto_get_flow_stats(PTORuntime* rt) {
+    if (!rt) return NULL;
+    return &rt->flow_stats;
+}
+
+void pto_reset_flow_stats(PTORuntime* rt) {
+    if (!rt) return;
+    memset(&rt->flow_stats, 0, sizeof(rt->flow_stats));
+}
+
+PTOStallReason pto_get_current_stall(PTORuntime* rt) {
+    if (!rt) return PTO_STALL_NONE;
+    return rt->flow_stats.current_stall;
+}
+
+void pto_print_flow_stats(PTORuntime* rt) {
+    if (!rt) return;
+    
+    const PTOFlowControlStats* stats = &rt->flow_stats;
+    
+    printf("\n[PTO Flow Control Statistics]\n");
+    printf("================================================================================\n");
+    printf("\n");
+    
+    // Stall counts
+    printf("Stall Counts (times orchestration was blocked):\n");
+    printf("  Task Ring (window full):     %10lld\n", (long long)stats->task_ring_stalls);
+    printf("  TensorMap Pool:              %10lld\n", (long long)stats->tensormap_pool_stalls);
+    printf("  DepList Pool:                %10lld\n", (long long)stats->deplist_pool_stalls);
+    printf("  Heap Ring:                   %10lld\n", (long long)stats->heap_ring_stalls);
+    printf("  Ready Queue:                 %10lld\n", (long long)stats->ready_queue_stalls);
+    printf("\n");
+    
+    // Stall times
+    printf("Stall Times (nanoseconds):\n");
+    printf("  Task Ring (window full):     %10lld ns", (long long)stats->task_ring_stall_ns);
+    if (stats->task_ring_stall_ns > 1000000) {
+        printf("  (%.2f ms)", stats->task_ring_stall_ns / 1000000.0);
+    }
+    printf("\n");
+    printf("  TensorMap Pool:              %10lld ns", (long long)stats->tensormap_pool_stall_ns);
+    if (stats->tensormap_pool_stall_ns > 1000000) {
+        printf("  (%.2f ms)", stats->tensormap_pool_stall_ns / 1000000.0);
+    }
+    printf("\n");
+    printf("  DepList Pool:                %10lld ns", (long long)stats->deplist_pool_stall_ns);
+    if (stats->deplist_pool_stall_ns > 1000000) {
+        printf("  (%.2f ms)", stats->deplist_pool_stall_ns / 1000000.0);
+    }
+    printf("\n");
+    printf("  Heap Ring:                   %10lld ns", (long long)stats->heap_ring_stall_ns);
+    if (stats->heap_ring_stall_ns > 1000000) {
+        printf("  (%.2f ms)", stats->heap_ring_stall_ns / 1000000.0);
+    }
+    printf("\n");
+    printf("  Ready Queue:                 %10lld ns", (long long)stats->ready_queue_stall_ns);
+    if (stats->ready_queue_stall_ns > 1000000) {
+        printf("  (%.2f ms)", stats->ready_queue_stall_ns / 1000000.0);
+    }
+    printf("\n\n");
+    
+    // Total stall time
+    int64_t total_stall_ns = stats->task_ring_stall_ns + 
+                             stats->tensormap_pool_stall_ns +
+                             stats->deplist_pool_stall_ns +
+                             stats->heap_ring_stall_ns +
+                             stats->ready_queue_stall_ns;
+    printf("Total Stall Time:              %10lld ns", (long long)total_stall_ns);
+    if (total_stall_ns > 1000000) {
+        printf("  (%.2f ms)", total_stall_ns / 1000000.0);
+    }
+    printf("\n\n");
+    
+    // High water marks
+    printf("High Water Marks (peak usage):\n");
+    printf("  Task Ring:      %10d / %d  (%.1f%%)\n", 
+           stats->task_ring_hwm, PTO_TASK_WINDOW_SIZE,
+           100.0 * stats->task_ring_hwm / PTO_TASK_WINDOW_SIZE);
+    printf("  TensorMap Pool: %10d / %d  (%.1f%%)\n",
+           stats->tensormap_pool_hwm, PTO_TENSORMAP_POOL_SIZE,
+           100.0 * stats->tensormap_pool_hwm / PTO_TENSORMAP_POOL_SIZE);
+    printf("  DepList Pool:   %10d / %d  (%.1f%%)\n",
+           stats->deplist_pool_hwm, PTO_DEP_LIST_POOL_SIZE,
+           100.0 * stats->deplist_pool_hwm / PTO_DEP_LIST_POOL_SIZE);
+    printf("  Heap Ring:      %10d / %d bytes  (%.1f%%)\n",
+           stats->heap_hwm, PTO_HEAP_SIZE_BYTES,
+           100.0 * stats->heap_hwm / (double)PTO_HEAP_SIZE_BYTES);
+    printf("  Ready Queue:    %10d / %d  (%.1f%%)\n",
+           stats->ready_queue_hwm, PTO_MAX_READY_QUEUE,
+           100.0 * stats->ready_queue_hwm / PTO_MAX_READY_QUEUE);
+    printf("\n");
+    
+    // Sizing recommendations
+    printf("Sizing Recommendations:\n");
+    bool any_recommendation = false;
+    
+    if (stats->task_ring_stalls > 0) {
+        printf("  [!] Task Ring was exhausted %lld times.\n", (long long)stats->task_ring_stalls);
+        printf("      Consider increasing PTO_TASK_WINDOW_SIZE (current: %d)\n", PTO_TASK_WINDOW_SIZE);
+        any_recommendation = true;
+    }
+    
+    if (stats->tensormap_pool_stalls > 0) {
+        printf("  [!] TensorMap Pool was exhausted %lld times.\n", (long long)stats->tensormap_pool_stalls);
+        printf("      Consider increasing PTO_TENSORMAP_POOL_SIZE (current: %d)\n", PTO_TENSORMAP_POOL_SIZE);
+        any_recommendation = true;
+    }
+    
+    if (stats->deplist_pool_stalls > 0) {
+        printf("  [!] DepList Pool was exhausted %lld times.\n", (long long)stats->deplist_pool_stalls);
+        printf("      Consider increasing PTO_DEP_LIST_POOL_SIZE (current: %d)\n", PTO_DEP_LIST_POOL_SIZE);
+        any_recommendation = true;
+    }
+    
+    if (stats->heap_ring_stalls > 0) {
+        printf("  [!] Heap Ring was exhausted %lld times.\n", (long long)stats->heap_ring_stalls);
+        printf("      Consider increasing PTO_HEAP_SIZE_BYTES (current: %d MB)\n", 
+               PTO_HEAP_SIZE_BYTES / (1024 * 1024));
+        any_recommendation = true;
+    }
+    
+    if (stats->ready_queue_stalls > 0) {
+        printf("  [!] Ready Queue was exhausted %lld times.\n", (long long)stats->ready_queue_stalls);
+        printf("      Consider increasing PTO_MAX_READY_QUEUE (current: %d)\n", PTO_MAX_READY_QUEUE);
+        any_recommendation = true;
+    }
+    
+    // High water mark warnings
+    if (stats->task_ring_hwm > PTO_TASK_WINDOW_SIZE * 0.9) {
+        printf("  [WARN] Task Ring usage reached %.1f%% - consider increasing size\n",
+               100.0 * stats->task_ring_hwm / PTO_TASK_WINDOW_SIZE);
+        any_recommendation = true;
+    }
+    if (stats->tensormap_pool_hwm > PTO_TENSORMAP_POOL_SIZE * 0.9) {
+        printf("  [WARN] TensorMap Pool usage reached %.1f%% - consider increasing size\n",
+               100.0 * stats->tensormap_pool_hwm / PTO_TENSORMAP_POOL_SIZE);
+        any_recommendation = true;
+    }
+    if (stats->deplist_pool_hwm > PTO_DEP_LIST_POOL_SIZE * 0.9) {
+        printf("  [WARN] DepList Pool usage reached %.1f%% - consider increasing size\n",
+               100.0 * stats->deplist_pool_hwm / PTO_DEP_LIST_POOL_SIZE);
+        any_recommendation = true;
+    }
+    if (stats->heap_hwm > PTO_HEAP_SIZE_BYTES * 0.9) {
+        printf("  [WARN] Heap Ring usage reached %.1f%% - consider increasing size\n",
+               100.0 * stats->heap_hwm / (double)PTO_HEAP_SIZE_BYTES);
+        any_recommendation = true;
+    }
+    
+    if (!any_recommendation) {
+        printf("  All resources within normal limits. No changes needed.\n");
+    }
+    
+    printf("\n================================================================================\n");
 }

@@ -108,6 +108,14 @@ void pto2_orchestrator_reset(PTO2OrchestratorState* orch) {
 void pto2_orchestrator_set_scheduler(PTO2OrchestratorState* orch,
                                       PTO2SchedulerState* scheduler) {
     orch->scheduler = scheduler;
+    orch->init_task_on_submit = true;  // Default: initialize task on submit
+}
+
+void pto2_orchestrator_set_scheduler_mode(PTO2OrchestratorState* orch,
+                                           PTO2SchedulerState* scheduler,
+                                           bool init_on_submit) {
+    orch->scheduler = scheduler;
+    orch->init_task_on_submit = init_on_submit;
 }
 
 // =============================================================================
@@ -239,7 +247,13 @@ int32_t pto2_submit_task(PTO2OrchestratorState* orch,
     task->fanin_count = 0;
     task->fanout_head = 0;
     task->fanout_lock = 0;
-    task->fanout_count = task->scope_depth;  // Initial: scope_depth references
+    // Initial fanout_count = scope_depth (number of enclosing scopes that reference this task)
+    // WARNING: If task_window_size is too small, this can cause deadlock:
+    //   - Orchestrator waits for task ring space (flow control)
+    //   - scope_end() needs orchestrator to continue execution
+    //   - Tasks can't become CONSUMED without scope_end releasing references
+    // Solution: Increase task_window_size to accommodate all tasks in scope
+    task->fanout_count = task->scope_depth;
     task->packed_buffer_base = NULL;
     task->packed_buffer_end = NULL;
     task->num_outputs = 0;
@@ -339,13 +353,11 @@ int32_t pto2_submit_task(PTO2OrchestratorState* orch,
         PTO2TaskParam* p = &params[i];
         
         if (p->type == PTO2_PARAM_OUTPUT || p->type == PTO2_PARAM_INOUT) {
-            // Compute actual buffer address for this output
-            void* output_addr = (task->packed_buffer_base != NULL) ?
-                (char*)task->packed_buffer_base + task->output_offsets[output_idx] :
-                p->buffer;
-            
+            // IMPORTANT: Use the ORIGINAL buffer address (p->buffer) for TensorMap,
+            // not the packed buffer address. This ensures that consumers looking up
+            // dependencies using the original tensor address will find this producer.
             PTO2TensorRegion region = {
-                .base_ptr = output_addr,
+                .base_ptr = p->buffer,        // Use original tensor address
                 .tile_index = p->tile_index,
                 .offset = 0,
                 .size = p->size
@@ -366,7 +378,8 @@ int32_t pto2_submit_task(PTO2OrchestratorState* orch,
     }
     
     // === STEP 6: Initialize task in scheduler ===
-    if (orch->scheduler) {
+    // In multi-threaded mode, scheduler thread handles task initialization via polling
+    if (orch->scheduler && orch->init_task_on_submit) {
         pto2_scheduler_init_task(orch->scheduler, task_id, task);
     }
     

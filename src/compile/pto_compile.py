@@ -313,6 +313,46 @@ class PTOFunctionBuilder:
         self.symbol_table.define(name, Symbol(name, "memref", MemRefType(space, dtype, tile_shape)))
         return self
     
+    def intermediate_buffer(self, name: str, size: int,
+                            dtype: ElementType = ElementType.F32,
+                            scope_local: bool = True) -> "PTOFunctionBuilder":
+        """
+        Declare an intermediate buffer for Mode B dynamic allocation.
+        
+        Unlike memref(), intermediate buffers are NOT passed as function parameters.
+        Instead, they are dynamically allocated by the runtime during task submission:
+        
+        1. Orchestration declares: `void* name = NULL;`
+        2. Task submission uses: `PTO_OUTPUT(&name, tile_idx, size)`
+        3. Runtime allocates memory and writes address to `name`
+        4. Subsequent tasks can use `name` as input
+        
+        This enables runtime-managed memory allocation with automatic dependency tracking.
+        
+        Args:
+            name: Buffer variable name
+            size: Size in bytes (typically rows * cols * sizeof(dtype))
+            dtype: Element data type (default: F32)
+            scope_local: If True, buffer freed when scope ends (default: True)
+        
+        Example:
+            .intermediate_buffer("P", 64*64*4)  # 64x64 float buffer
+            .call("gemm_tile", {
+                "input_a": ("A", "idx_a", 0),
+                "input_b": ("B", "idx_b", 0),
+                "output": ("P", "idx_p", 0),   # Runtime allocates P
+            })
+            .call("tile_add", {
+                "input_a": ("C", "idx_c", 0),
+                "input_b": ("P", "idx_p", 0),  # Uses runtime-allocated P
+                "output": ("C", "idx_c", 0),
+            })
+        """
+        self.program.add_intermediate_buffer(name, size, dtype, scope_local)
+        # Register in symbol table as a special "intermediate" type
+        self.symbol_table.define(name, Symbol(name, "intermediate", dtype))
+        return self
+    
     # Function properties
     def in_core(self) -> "PTOFunctionBuilder":
         """Mark as InCore function (default)."""

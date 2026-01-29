@@ -133,6 +133,10 @@ PTO2SimState* pto2_sim_create(const PTO2SimConfig* config) {
         #endif
     }
     
+    // Initialize task end cycle tracking (will be resized in sim_run if needed)
+    sim->task_end_cycles = NULL;
+    sim->task_end_capacity = 0;
+    
     // Enable trace if configured
     if (config->trace_enabled && config->trace_filename) {
         pto2_sim_enable_trace(sim, config->trace_filename);
@@ -163,6 +167,10 @@ void pto2_sim_destroy(PTO2SimState* sim) {
     
     if (sim->workers) {
         free(sim->workers);
+    }
+    
+    if (sim->task_end_cycles) {
+        free(sim->task_end_cycles);
     }
     
     free(sim);
@@ -215,22 +223,53 @@ static int find_available_worker(PTO2SimState* sim, PTO2WorkerType type,
 }
 
 /**
+ * Ensure task_end_cycles array has sufficient capacity
+ */
+static void ensure_task_end_capacity(PTO2SimState* sim, int32_t task_id) {
+    int32_t needed = task_id + 1;
+    if (needed > sim->task_end_capacity) {
+        int32_t new_cap = sim->task_end_capacity == 0 ? 1024 : sim->task_end_capacity * 2;
+        while (new_cap < needed) new_cap *= 2;
+        
+        int64_t* new_array = (int64_t*)realloc(sim->task_end_cycles, 
+                                                new_cap * sizeof(int64_t));
+        if (new_array) {
+            // Zero out new entries
+            for (int32_t i = sim->task_end_capacity; i < new_cap; i++) {
+                new_array[i] = 0;
+            }
+            sim->task_end_cycles = new_array;
+            sim->task_end_capacity = new_cap;
+        }
+    }
+}
+
+/**
  * Simulate a single task
  */
 static void sim_execute_task(PTO2SimState* sim, PTO2Runtime* rt, int32_t task_id) {
     PTO2TaskDescriptor* task = pto2_sm_get_task(rt->sm_handle, task_id);
     
+    // Ensure we can track this task's end cycle
+    ensure_task_end_capacity(sim, task_id);
+    
     // Find earliest start time based on dependencies
     int64_t earliest_start = 0;
     
-    // Check fanin tasks for completion time
+    // Check fanin tasks for completion time - use their recorded end cycles
     int32_t current = task->fanin_head;
     while (current > 0) {
         PTO2DepListEntry* entry = pto2_dep_pool_get(&rt->orchestrator.dep_pool, current);
         if (!entry) break;
         
-        // In a full implementation, we'd track end_cycle per task and use it here
-        // For now, dependencies are handled by the ready queue ordering
+        // Get the dependency task's end cycle
+        int32_t dep_task_id = entry->task_id;
+        if (dep_task_id >= 0 && dep_task_id < sim->task_end_capacity) {
+            int64_t dep_end = sim->task_end_cycles[dep_task_id];
+            if (dep_end > earliest_start) {
+                earliest_start = dep_end;
+            }
+        }
         
         current = entry->next_offset;
     }
@@ -279,6 +318,12 @@ static void sim_execute_task(PTO2SimState* sim, PTO2Runtime* rt, int32_t task_id
     worker->total_compute_cycles += exec_cycles;
     worker->current_cycle = start_cycle + exec_cycles;
     worker->tasks_executed++;
+    
+    // Record this task's end cycle for dependency tracking
+    int64_t end_cycle = start_cycle + exec_cycles;
+    if (task_id >= 0 && task_id < sim->task_end_capacity) {
+        sim->task_end_cycles[task_id] = end_cycle;
+    }
     
     // Update global statistics
     sim->total_task_cycles += exec_cycles;
@@ -358,8 +403,29 @@ void pto2_sim_enable_trace(PTO2SimState* sim, const char* filename) {
     
     sim->trace_file = fopen(filename, "w");
     if (sim->trace_file) {
-        // Write trace header
+        // Write Chrome Trace Event Format with metadata
         fprintf(sim->trace_file, "[\n");
+        
+        // Add process name metadata
+        fprintf(sim->trace_file, 
+            "  {\"name\": \"process_name\", \"ph\": \"M\", \"pid\": 0, "
+            "\"args\": {\"name\": \"PTO Runtime2 Simulation\"}},\n");
+        
+        // Add thread name metadata for Cube workers
+        for (int i = 0; i < sim->config.num_cube_cores; i++) {
+            fprintf(sim->trace_file,
+                "  {\"name\": \"thread_name\", \"ph\": \"M\", \"pid\": 0, \"tid\": %d, "
+                "\"args\": {\"name\": \"Cube%d\"}},\n", i, i);
+        }
+        
+        // Add thread name metadata for Vector workers (offset by cube cores)
+        for (int i = 0; i < sim->config.num_vector_cores; i++) {
+            int tid = sim->config.num_cube_cores + i;
+            fprintf(sim->trace_file,
+                "  {\"name\": \"thread_name\", \"ph\": \"M\", \"pid\": 0, \"tid\": %d, "
+                "\"args\": {\"name\": \"Vector%d\"}},\n", tid, i);
+        }
+        
         sim->trace_entries = 0;
     }
 }
@@ -385,6 +451,12 @@ void pto2_sim_trace_task(PTO2SimState* sim, int32_t worker_id,
         fprintf(sim->trace_file, ",\n");
     }
     
+    // Convert cycles to microseconds for Perfetto display
+    // Scale up: 1 cycle = 1000 microseconds = 1 millisecond for better visibility
+    // This makes the trace easily viewable in Perfetto/Chrome tracing
+    int64_t ts_us = start_cycle * 1000;  // Scale up for visibility
+    int64_t dur_us = (end_cycle - start_cycle) * 1000;
+    
     fprintf(sim->trace_file,
             "  {\"name\": \"%s\", \"cat\": \"task\", \"ph\": \"X\", "
             "\"pid\": 0, \"tid\": %d, "
@@ -392,8 +464,8 @@ void pto2_sim_trace_task(PTO2SimState* sim, int32_t worker_id,
             "\"args\": {\"task_id\": %d}}",
             name,
             worker_id,
-            (long long)(start_cycle * 1000 / 1000),  // Scale to microseconds
-            (long long)((end_cycle - start_cycle) * 1000 / 1000),
+            (long long)ts_us,
+            (long long)dur_us,
             task_id);
     
     sim->trace_entries++;

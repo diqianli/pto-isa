@@ -442,7 +442,11 @@ void* a2a3_orch_thread_func(void* arg) {
     // Signal that orchestration is done (no more tasks will be added)
     pthread_mutex_lock(&rt->task_mutex);
     rt->orchestration_complete = true;
+    // Broadcast all flow control conditions to wake up any waiters
     pthread_cond_broadcast(&rt->window_not_full);
+    pthread_cond_broadcast(&rt->tensormap_not_full);
+    pthread_cond_broadcast(&rt->deplist_not_full);
+    pthread_cond_broadcast(&rt->heap_not_full);
     pthread_mutex_unlock(&rt->task_mutex);
     
     // Signal worker queues in case they're waiting

@@ -82,6 +82,10 @@ typedef struct {
     int64_t total_task_cycles;    // Total cycles across all tasks
     int64_t makespan;             // Critical path length
     
+    // Per-task completion time tracking (for dependency handling)
+    int64_t* task_end_cycles;     // End cycle for each task
+    int32_t task_end_capacity;    // Capacity of task_end_cycles array
+    
     // Trace state
     FILE* trace_file;
     int32_t trace_entries;

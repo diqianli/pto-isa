@@ -378,6 +378,11 @@ def gen_task_scheduling_code(callee: str, args: Union[List, Dict],
         if callee_prog and getattr(callee_prog, 'is_cube', False):
             callee_is_cube = 1
     
+    # Get intermediate buffers for Mode B detection
+    intermediate_buffers = {}
+    if orch_ctx.current_program:
+        intermediate_buffers = getattr(orch_ctx.current_program, 'intermediate_buffers', {})
+    
     lines.append(f"// Task {task_id}: {callee}")
     lines.append(f"int32_t t{task_id} = pto_task_alloc(rt, \"{callee}\", NULL, {buf_bytes}, {reuse_bytes}, {callee_is_cube});")
     
@@ -435,19 +440,32 @@ def gen_task_scheduling_code(callee: str, args: Union[List, Dict],
                     t_rows = memref_type.shape.rows
                     t_cols = memref_type.shape.cols
             
+            # Check if this tensor is an intermediate buffer (Mode B)
+            is_intermediate = tensor_name in intermediate_buffers
+            
             if is_output:
-                output_args.append((tensor_name, row_off, col_off, t_rows, t_cols))
+                output_args.append((tensor_name, row_off, col_off, t_rows, t_cols, is_intermediate))
                 orch_ctx.set_producer(tensor_name, task_id)
             else:
-                input_args.append((tensor_name, row_off, col_off, t_rows, t_cols))
+                input_args.append((tensor_name, row_off, col_off, t_rows, t_cols, is_intermediate))
     
     # Generate input tracking
-    for tensor, row_off, col_off, t_rows, t_cols in input_args:
-        lines.append(f"pto_task_add_input(rt, t{task_id}, {tensor}, {row_off}, {col_off}, {t_rows}, {t_cols});")
+    for tensor, row_off, col_off, t_rows, t_cols, is_intermediate in input_args:
+        if is_intermediate:
+            # Mode B: Use zero offsets to match output registration
+            lines.append(f"pto_task_add_input(rt, t{task_id}, {tensor}, 0, 0, {t_rows}, {t_cols});")
+        else:
+            lines.append(f"pto_task_add_input(rt, t{task_id}, {tensor}, {row_off}, {col_off}, {t_rows}, {t_cols});")
     
     # Generate output tracking
-    for tensor, row_off, col_off, t_rows, t_cols in output_args:
-        lines.append(f"pto_task_add_output(rt, t{task_id}, {tensor}, {row_off}, {col_off}, {t_rows}, {t_cols});")
+    for tensor, row_off, col_off, t_rows, t_cols, is_intermediate in output_args:
+        if is_intermediate:
+            # Mode B: Use &tensor (pointer-to-pointer) for runtime allocation writeback
+            # NOTE: Mode B requires zero offsets because each allocation is independent
+            lines.append(f"pto_task_add_output_ref(rt, t{task_id}, &{tensor}, 0, 0, {t_rows}, {t_cols});")
+        else:
+            # Mode A: Direct buffer pointer (pre-allocated)
+            lines.append(f"pto_task_add_output(rt, t{task_id}, {tensor}, {row_off}, {col_off}, {t_rows}, {t_cols});")
     
     lines.append(f"pto_task_submit(rt, t{task_id});")
     lines.append("")
@@ -636,6 +654,15 @@ class ARM64CodeGenerator:
             c_type = ARM64_TYPE_MAP.get(info.dtype, "float")
             lines.append(f"    {c_type} {name}[{info.rows}][{info.cols}];")
         lines.append("")
+        
+        # Declare intermediate buffers for Mode B dynamic allocation (orchestration only)
+        intermediate_buffers = getattr(program, 'intermediate_buffers', {})
+        if not is_in_core and intermediate_buffers:
+            lines.append("    // Intermediate buffers (Mode B: runtime-allocated)")
+            lines.append("    // These variables receive allocated addresses from runtime during task submission")
+            for buf_name, buf_info in intermediate_buffers.items():
+                lines.append(f"    void* {buf_name} = NULL;  // Size: {buf_info.size} bytes")
+            lines.append("")
 
         if not is_in_core:
             lines.append("    // Root scope for buffer lifetime management")

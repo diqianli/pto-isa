@@ -182,20 +182,26 @@ void bgemm_orchestration(PTORuntime* rt, ...) {
     for (int k = 0; k < K; k++) {
         for (int m = 0; m < M; m++) {
             for (int n = 0; n < N; n++) {
-                // Allocate intermediate buffer P
-                void* P = pto_buffer_alloc(rt, tile_size);
+                // Declare intermediate buffer P - will be allocated by runtime
+                // IMPORTANT: P is a pointer that will receive runtime-allocated address
+                void* P = NULL;
                 
                 // Task 1: gemm_tile produces P (async call)
+                // OUTPUT uses &P (pointer-to-pointer) so runtime can write allocated address
                 pto_submit_task(rt, "gemm_tile", {
-                    .inputs = {A[m,k], B[k,n]},
-                    .outputs = {P}
+                    PTO_INPUT(A[m,k], tile_idx_a, tile_size),
+                    PTO_INPUT(B[k,n], tile_idx_b, tile_size),
+                    PTO_OUTPUT(&P, tile_idx_p, tile_size)  // Runtime allocates and writes to P
                 });
+                // After submit_task returns, P now contains runtime-allocated address
                 
                 // Task 2: tile_add consumes P (async call)
-                // Dependency: Task 2 depends on Task 1 (P is produced by Task 1)
+                // INPUT uses P directly (now contains the runtime-allocated address)
+                // Dependency: Task 2 depends on Task 1 (TensorMap tracks P's producer)
                 pto_submit_task(rt, "tile_add", {
-                    .inputs = {C[m,n], P},
-                    .outputs = {C[m,n]}
+                    PTO_INPUT(C[m,n], tile_idx_c, tile_size),
+                    PTO_INPUT(P, tile_idx_p, tile_size),   // Uses runtime-allocated address
+                    PTO_INOUT(&C[m,n], tile_idx_c, tile_size)
                 });
                 
             }  // End of scope - P's fanout decremented
@@ -831,6 +837,37 @@ typedef struct TensorRegion {
 //   - Stale entries are simply ignored during lookup
 //   - Pool wraps around, overwriting stale entries automatically
 //
+// ========== CRITICAL: OVERLAPPING REGION DETECTION ==========
+//
+// The TensorMap must detect dependencies not only for EXACT region matches,
+// but also for OVERLAPPING sub-tensor regions. Two regions create a dependency
+// if they share the same base tensor (raw_tensor pointer) AND their sub-regions
+// (defined by offset and shape/size) partially or fully overlap.
+//
+// Overlap Detection Rules:
+//   1. Same base_ptr (raw_tensor): REQUIRED for any dependency
+//   2. Region overlap: Check if [offset1, offset1+size1) ∩ [offset2, offset2+size2) ≠ ∅
+//   3. Dependency types:
+//      - RAW (Read-After-Write): Consumer reads region that overlaps producer's output
+//      - WAR (Write-After-Read): Producer writes region that overlaps consumer's input
+//      - WAW (Write-After-Write): Both write to overlapping regions
+//
+// Example:
+//   Task A writes: base=X, offset=0, size=256     (bytes 0-255)
+//   Task B reads:  base=X, offset=128, size=256   (bytes 128-383)
+//   → Overlap detected (bytes 128-255), B depends on A
+//
+// Implementation Options:
+//   1. Interval Tree: O(log n + k) lookup, O(log n) insert
+//      - Best for many overlapping regions
+//   2. Tile-based bucketing: Hash by (base_ptr, tile_index)
+//      - Efficient when tiles rarely overlap across tile boundaries
+//   3. Conservative: Assume any same-base regions conflict
+//      - Simplest, may create unnecessary dependencies
+//
+// Current implementation uses tile-based bucketing with exact offset match.
+// For production use, consider upgrading to interval-based overlap detection.
+//
 typedef struct TensorMapEntry {
     TensorRegion region;
     int32_t producer_task_id;     // Used for validity check
@@ -862,12 +899,35 @@ typedef struct TensorMap {
 // ========== TENSOR MAP OPERATIONS (Ring Buffer with Lazy Invalidation) ==========
 
 // Hash function for tensor region
+// 
+// CRITICAL DESIGN DECISION: Hash ONLY by base_ptr
+// ================================================
+// 
+// For overlap detection to work correctly, ALL regions accessing the same
+// base tensor MUST be in the SAME hash bucket. This allows the lookup
+// function to find and check for overlaps.
+//
+// If we included offset in the hash, overlapping regions with different
+// offsets would end up in different buckets and never be compared!
+//
+// Example:
+//   Region A: base=X, offset=0,   size=256  → hash(X) → bucket 5
+//   Region B: base=X, offset=128, size=256  → hash(X) → bucket 5 (SAME!)
+//   Now lookup can detect overlap [128, 256)
+//
+// Trade-off: This increases average chain length for tensors with many
+// sub-regions, but correctness requires all same-base regions be comparable.
+//
 static inline uint32_t tensormap_hash(TensorMap* tm, TensorRegion* region) {
-    // Simple hash combining pointer and tile_index
-    uint64_t key = (uint64_t)region->base_ptr ^ 
-                   ((uint64_t)region->tile_index << 16) ^
-                   ((uint64_t)region->offset << 32);
-    return (uint32_t)(key % tm->num_buckets);
+    // Hash ONLY by base_ptr for correct overlap detection
+    // All regions of the same tensor will be in the same bucket
+    uint64_t key = (uint64_t)region->base_ptr;
+    
+    // Improve distribution by mixing bits (base_ptr often has low-order zeros)
+    key = key ^ (key >> 16);
+    key = key ^ (key >> 32);
+    
+    return (uint32_t)(key & (tm->num_buckets - 1));
 }
 
 // Check if entry is valid (producer task has not retired)
@@ -925,11 +985,30 @@ int32_t tensormap_lookup(TensorMap* tm, TensorRegion* region) {
             return -1;  // Not found (and cleaned up stale tail)
         }
         
-        // Entry is valid - check if region matches
+        // Entry is valid - check if region OVERLAPS
+        // 
+        // Since we hash only by base_ptr, all entries in this bucket have
+        // the potential to overlap with our query region. We must check:
+        //   1. Same base_ptr (raw tensor pointer)
+        //   2. Same tile_index (different tiles are disjoint memory regions)
+        //   3. Byte ranges [offset, offset+size) intersect within the tile
+        //
+        // Overlap condition (1D interval intersection):
+        //   [e_start, e_end) ∩ [r_start, r_end) ≠ ∅
+        //   ⟺ (e_start < r_end) AND (r_start < e_end)
+        //
         if (entry->region.base_ptr == region->base_ptr &&
-            entry->region.tile_index == region->tile_index &&
-            entry->region.offset == region->offset) {
-            return entry->producer_task_id;  // FOUND
+            entry->region.tile_index == region->tile_index) {
+            
+            int32_t e_start = entry->region.offset;
+            int32_t e_end = e_start + entry->region.size;
+            int32_t r_start = region->offset;
+            int32_t r_end = r_start + region->size;
+            
+            // Check for overlap within the same tile
+            if (e_start < r_end && r_start < e_end) {
+                return entry->producer_task_id;  // FOUND (overlapping regions)
+            }
         }
         
         // Move to next entry
@@ -1200,22 +1279,39 @@ Load Factor Analysis:
                               = (1024 × 2) / 1024 = 2
 ```
 
-**Hash Function Design:**
+**Hash Function Design (base_ptr only for overlap detection):**
 
 ```c
-// Combines base_ptr, tile_index, and offset for good distribution
+// Hash ONLY by base_ptr to enable overlap detection
+// All regions of the same base tensor will be in the same bucket
 uint32_t tensormap_hash(TensorMap* tm, TensorRegion* region) {
-    uint64_t key = (uint64_t)region->base_ptr ^ 
-                   ((uint64_t)region->tile_index << 16) ^
-                   ((uint64_t)region->offset << 32);
+    uint64_t key = (uint64_t)region->base_ptr;
+    
+    // Improve distribution by mixing bits (pointers often have aligned low bits)
+    key = key ^ (key >> 16);
+    key = key ^ (key >> 32);
     
     // Use bitwise AND for power-of-2 modulo (faster than %)
     return (uint32_t)(key & (tm->num_buckets - 1));
 }
 
+// CRITICAL: Why hash only by base_ptr?
+// ====================================
+// For overlap detection, ALL sub-regions of the same tensor MUST be
+// in the SAME hash bucket. If we included offset in the hash:
+//   Region A: base=X, offset=0   → bucket 5
+//   Region B: base=X, offset=128 → bucket 12  (WRONG! Can't detect overlap)
+//
+// With base_ptr-only hash:
+//   Region A: base=X, offset=0   → bucket 5
+//   Region B: base=X, offset=128 → bucket 5   (CORRECT! Same bucket)
+//
+// Trade-off: Higher chain length for tensors with many sub-regions,
+// but correctness requires all same-base regions be in same bucket.
+//
 // Requirements:
 //   - num_buckets MUST be power of 2 for fast modulo
-//   - Good distribution across buckets to minimize collisions
+//   - Bit mixing improves distribution for aligned pointers
 ```
 
 **Lookup Performance Optimization:**
@@ -1300,6 +1396,185 @@ TensorMap Pool Size Calculation:
 │   - E2: T=7 >= 6 → VALID                                                     │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### TensorMap Overlapping Region Detection (Advanced Design)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│               OVERLAPPING SUB-TENSOR DEPENDENCY DETECTION                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   PROBLEM: Dependencies exist not just for exact region matches, but also   │
+│   when sub-tensor regions OVERLAP within the same base tensor.              │
+│                                                                              │
+│   Base Tensor X (1024 bytes):                                                │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │  0       128      256      384      512      640      768      1024│    │
+│   │  ├────────┼────────┼────────┼────────┼────────┼────────┼────────┤ │    │
+│   │                                                                    │    │
+│   │  Task A writes: [0, 256)      ████████                             │    │
+│   │  Task B reads:  [128, 384)         ████████                        │    │
+│   │                              ↑      ↑                              │    │
+│   │                              └──────┘ OVERLAP: [128, 256)          │    │
+│   │                                                                    │    │
+│   │  Result: Task B depends on Task A (RAW dependency)                 │    │
+│   │                                                                    │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   OVERLAP FORMULA (1D interval intersection):                                │
+│   ─────────────────────────────────────────                                  │
+│   Region A: [start_a, end_a)  where end_a = start_a + size_a                │
+│   Region B: [start_b, end_b)  where end_b = start_b + size_b                │
+│                                                                              │
+│   Overlap exists if: (start_a < end_b) AND (start_b < end_a)                │
+│                                                                              │
+│   Prerequisite: Both regions must have SAME base_ptr (raw_tensor)           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    DEPENDENCY TYPES WITH OVERLAPPING REGIONS                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   1. RAW (Read-After-Write):                                                 │
+│      Consumer READS region that overlaps with Producer's OUTPUT              │
+│      → Consumer must wait for Producer                                       │
+│                                                                              │
+│      Producer (Task A): output region [0, 256)                               │
+│      Consumer (Task B): input region [128, 384)                              │
+│      Overlap: [128, 256) → Task B depends on Task A                         │
+│                                                                              │
+│   2. WAW (Write-After-Write):                                                │
+│      Task B WRITES to region that overlaps with Task A's OUTPUT              │
+│      → Task B must wait for Task A (preserve write order)                    │
+│                                                                              │
+│      Task A: output region [0, 256)                                          │
+│      Task B: output region [128, 384)                                        │
+│      Overlap: [128, 256) → Task B depends on Task A                         │
+│                                                                              │
+│   3. WAR (Write-After-Read):                                                 │
+│      Task B WRITES to region that overlaps with Task A's INPUT               │
+│      → Task B must wait for Task A (A must read before B writes)            │
+│      Note: This is tracked via OUTPUT registration, not input                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    IMPLEMENTATION OPTIONS                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   OPTION 1: Exact Match Only (Current Simple Implementation)                │
+│   ──────────────────────────────────────────────────────────                │
+│   - Match only when base_ptr, tile_index, AND offset are identical          │
+│   - Pros: O(1) lookup per entry, simple implementation                      │
+│   - Cons: May miss dependencies for overlapping but non-identical regions   │
+│   - Use case: Tile-aligned access patterns where tiles don't overlap        │
+│                                                                              │
+│   OPTION 2: Same-Base Conservative (All regions with same base conflict)    │
+│   ──────────────────────────────────────────────────────────────────────    │
+│   - Any two regions with same base_ptr create a dependency                  │
+│   - Pros: Very simple, never misses dependencies                            │
+│   - Cons: Creates unnecessary dependencies, reduces parallelism             │
+│   - Use case: Single output per tensor, or when parallelism not critical    │
+│                                                                              │
+│   OPTION 3: Interval Overlap Check (Recommended for Production)             │
+│   ─────────────────────────────────────────────────────────────             │
+│   - Check actual byte-range overlap: (s1 < e2) && (s2 < e1)                │
+│   - Pros: Accurate dependency tracking, maximum parallelism                 │
+│   - Cons: O(n) per lookup in worst case (all same base_ptr)                │
+│   - Optimization: Use Interval Tree for O(log n + k) lookup                 │
+│                                                                              │
+│   OPTION 4: Tile-Based with Overlap (Hybrid Approach)                       │
+│   ────────────────────────────────────────────────────                      │
+│   - Primary hash: (base_ptr, tile_index)                                    │
+│   - Within same tile: check offset/size overlap                             │
+│   - Pros: Good balance of accuracy and performance                          │
+│   - Cons: Requires tiles to be well-defined boundaries                      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Overlap Detection Code (tensormap_lookup and region_overlap):**
+
+```c
+// Check if two regions OVERLAP (not just exact match)
+// 
+// Overlap condition:
+//   1. Same base_ptr (raw tensor pointer)
+//   2. Same tile_index (different tiles are disjoint memory regions)
+//   3. Byte ranges [offset, offset+size) intersect within the tile
+//
+// Note: tile_index represents a tile/block subdivision of the tensor.
+// Different tile indices are treated as non-overlapping memory regions,
+// even if their offsets are the same (offset is relative to tile start).
+//
+bool region_overlap(TensorRegion* a, TensorRegion* b) {
+    // Must be same base tensor
+    if (a->base_ptr != b->base_ptr) {
+        return false;
+    }
+    
+    // Must be same tile (different tiles don't overlap)
+    if (a->tile_index != b->tile_index) {
+        return false;
+    }
+    
+    // Check 1D interval overlap within tile
+    int32_t a_start = a->offset;
+    int32_t a_end = a_start + a->size;
+    int32_t b_start = b->offset;
+    int32_t b_end = b_start + b->size;
+    
+    // Overlap exists if: (a_start < b_end) AND (b_start < a_end)
+    return (a_start < b_end) && (b_start < a_end);
+}
+
+// Lookup with overlap detection
+int32_t tensormap_lookup(TensorMap* tm, TensorRegion* region) {
+    uint32_t bucket = tensormap_hash(tm, region);  // Hash only by base_ptr
+    int32_t offset = tm->buckets[bucket];
+    
+    while (offset >= 0) {
+        TensorMapEntry* entry = &tm->entry_pool[offset];
+        
+        // Check validity first (lazy invalidation)
+        if (!tensormap_entry_valid(tm, entry)) {
+            // Chain truncation (stale entries at tail)
+            // ...
+            return -1;
+        }
+        
+        // Check for OVERLAP (not just exact match)
+        if (region_overlap(&entry->region, region)) {
+            return entry->producer_task_id;  // FOUND (overlapping)
+        }
+        
+        offset = entry->next_in_bucket;
+    }
+    
+    return -1;  // Not found
+}
+
+// For multi-dimensional tensors, extend overlap check:
+bool regions_overlap_nd(TensorRegion* a, TensorRegion* b, int ndim) {
+    if (a->base_ptr != b->base_ptr) return false;
+    if (a->tile_index != b->tile_index) return false;
+    
+    // Check overlap in each dimension
+    for (int d = 0; d < ndim; d++) {
+        int32_t a_start = a->offset[d];
+        int32_t a_end = a_start + a->shape[d];
+        int32_t b_start = b->offset[d];
+        int32_t b_end = b_start + b->shape[d];
+        
+        // No overlap in this dimension = no overlap at all
+        if (a_start >= b_end || b_start >= a_end) {
+            return false;
+        }
+    }
+    return true;  // Overlap in all dimensions
+}
 ```
 
 #### Scheduler State (Dynamic, owned by Scheduler)
@@ -1914,54 +2189,214 @@ typedef struct TaskRing {
 
 #### Ring Buffer Flow Control Diagram
 
+The runtime uses **five ring buffers** that implement flow control. When any buffer is exhausted, the orchestrator blocks until the scheduler frees resources.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    RING BUFFER FLOW CONTROL                                  │
+│                    RING BUFFER FLOW CONTROL (ALL 5 RINGS)                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   ORCHESTRATOR                              SCHEDULER                        │
-│   ────────────                              ─────────                        │
-│   Produces tasks                            Consumes tasks                   │
-│   Allocates buffers                         Advances last_task_alive         │
-│   Reads: last_task_alive, heap_tail         Writes: last_task_alive, heap_tail│
+│   ORCHESTRATOR (Producer)                   SCHEDULER (Consumer)            │
+│   ───────────────────────                   ────────────────────            │
+│   • Allocates task slots                    • Completes tasks               │
+│   • Inserts TensorMap entries               • Advances last_task_alive      │
+│   • Allocates DepList nodes                 • Frees all resources at once   │
+│   • Allocates heap buffers                                                   │
+│   • Enqueues ready tasks                                                     │
 │                                                                              │
 │   ┌──────────────────────────────────────────────────────────────────┐      │
-│   │                      TASK RING BUFFER                             │      │
+│   │  1. TASK RING (PTO_TASK_WINDOW_SIZE = 8192)                      │      │
+│   │     Condition: window_not_full                                    │      │
 │   │                                                                   │      │
-│   │    last_task_alive                current_index                   │      │
-│   │          │                              │                         │      │
-│   │          ▼                              ▼                         │      │
-│   │    ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐             │      │
-│   │    │CONS │COMP │READY│ RUN │PEND │ ... │FREE │FREE │             │      │
-│   │    └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘             │      │
-│   │    ◄──────── ACTIVE TASKS ────────►◄─── FREE SLOTS ──►          │      │
-│   │                          (wraps around)                          │      │
+│   │     last_task_alive              next_task_id                     │      │
+│   │           │                           │                           │      │
+│   │           ▼                           ▼                           │      │
+│   │     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                  │      │
+│   │     │CONS │COMP │READY│ RUN │PEND │FREE │FREE │                  │      │
+│   │     └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                  │      │
+│   │     ◄────── tasks_in_flight ──────►                              │      │
 │   │                                                                   │      │
-│   │    If current_index catches up to last_task_alive:               │      │
-│   │    → Orchestrator STALLS (no free task slots)                    │      │
-│   │    → Wait for Scheduler to advance last_task_alive               │      │
+│   │     STALL: tasks_in_flight >= PTO_TASK_WINDOW_SIZE               │      │
 │   └──────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
 │   ┌──────────────────────────────────────────────────────────────────┐      │
-│   │                      HEAP RING BUFFER                             │      │
+│   │  2. TENSORMAP POOL (PTO_TENSORMAP_POOL_SIZE = 262144)            │      │
+│   │     Condition: tensormap_not_full                                 │      │
 │   │                                                                   │      │
-│   │         tail                            top                       │      │
-│   │          │                               │                        │      │
-│   │          ▼                               ▼                        │      │
-│   │    ┌─────┬───────────────────────────────┬──────────────────┐    │      │
-│   │    │FREE │      ACTIVE BUFFERS           │    FREE SPACE    │    │      │
-│   │    └─────┴───────────────────────────────┴──────────────────┘    │      │
-│   │                          (wraps around)                          │      │
+│   │              pool_head (allocate)                                 │      │
+│   │                   │                                               │      │
+│   │                   ▼                                               │      │
+│   │     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                  │      │
+│   │     │stale│stale│LIVE │LIVE │LIVE │ ... │next │                  │      │
+│   │     └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                  │      │
+│   │           ▲                                                       │      │
+│   │     Stale entries (producer_task_id < last_task_alive)           │      │
+│   │     can be reused; LIVE entries block allocation                 │      │
 │   │                                                                   │      │
-│   │    If (top + request_size) would cross tail:                     │      │
-│   │    → Orchestrator STALLS (insufficient heap space)               │      │
-│   │    → Wait for Scheduler to advance tail                          │      │
+│   │     STALL: entry.producer_task_id >= last_task_alive             │      │
 │   └──────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
-│   KEY: Both rings provide BACK-PRESSURE from Scheduler to Orchestrator      │
+│   ┌──────────────────────────────────────────────────────────────────┐      │
+│   │  3. DEPLIST POOL (PTO_DEP_LIST_POOL_SIZE = 131072)               │      │
+│   │     Condition: deplist_not_full                                   │      │
+│   │                                                                   │      │
+│   │          dep_list_tail                    dep_list_top            │      │
+│   │               │                               │                   │      │
+│   │               ▼                               ▼                   │      │
+│   │     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                  │      │
+│   │     │FREE │fanin│fanin│fano │fano │ ... │next │                  │      │
+│   │     └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                  │      │
+│   │     ◄free►◄──────── ACTIVE ENTRIES ────────►                     │      │
+│   │                                                                   │      │
+│   │     STALL: (dep_list_top + 1) % SIZE == dep_list_tail            │      │
+│   └──────────────────────────────────────────────────────────────────┘      │
+│                                                                              │
+│   ┌──────────────────────────────────────────────────────────────────┐      │
+│   │  4. HEAP RING (PTO_HEAP_SIZE_BYTES = 1GB)                        │      │
+│   │     Condition: heap_not_full                                      │      │
+│   │                                                                   │      │
+│   │         heap_tail                         heap_top                │      │
+│   │              │                               │                    │      │
+│   │              ▼                               ▼                    │      │
+│   │     ┌────────┬───────────────────────────────┬─────────────┐     │      │
+│   │     │  FREE  │     PACKED OUTPUT BUFFERS     │  FREE SPACE │     │      │
+│   │     └────────┴───────────────────────────────┴─────────────┘     │      │
+│   │                        (wraps around)                            │      │
+│   │                                                                   │      │
+│   │     STALL: No contiguous space >= request_size                   │      │
+│   └──────────────────────────────────────────────────────────────────┘      │
+│                                                                              │
+│   ┌──────────────────────────────────────────────────────────────────┐      │
+│   │  5. READY QUEUE (PTO_MAX_READY_QUEUE = 65536)                    │      │
+│   │     Condition: ready_queue_not_full                               │      │
+│   │                                                                   │      │
+│   │          ready_head                        ready_tail             │      │
+│   │              │                                │                   │      │
+│   │              ▼                                ▼                   │      │
+│   │     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                  │      │
+│   │     │t123 │t124 │t125 │ ... │    │    │    │                     │      │
+│   │     └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                  │      │
+│   │     ◄──────── ready_count ────────►                              │      │
+│   │                                                                   │      │
+│   │     STALL: ready_count >= PTO_MAX_READY_QUEUE (rare)             │      │
+│   └──────────────────────────────────────────────────────────────────┘      │
+│                                                                              │
+│   ═══════════════════════════════════════════════════════════════════       │
+│   RESOURCE RELEASE: When scheduler calls pto_advance_last_task_alive():     │
+│                                                                              │
+│   1. Task slot becomes FREE (task.is_consumed = true)                        │
+│   2. TensorMap entries become stale (producer_task_id < last_task_alive)    │
+│   3. DepList tail advances (dep_list_tail = task.dep_pool_end)              │
+│   4. Heap tail advances (heap_tail = task.packed_buffer_end)                │
+│   5. Broadcast ALL condition variables to wake blocked orchestrator         │
+│   ═══════════════════════════════════════════════════════════════════       │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+#### Flow Control Implementation Details
+
+**1. Task Ring Flow Control**
+```c
+// In pto_task_alloc_impl()
+if (tasks_in_flight >= PTO_TASK_WINDOW_SIZE) {
+    if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
+        rt->flow_stats.current_stall = PTO_STALL_TASK_RING;
+        rt->flow_stats.task_ring_stalls++;
+        int64_t stall_start = pto_get_time_ns();
+        
+        pthread_mutex_lock(&rt->task_mutex);
+        while ((rt->next_task_id - rt->last_task_alive) >= PTO_TASK_WINDOW_SIZE) {
+            pthread_cond_wait(&rt->window_not_full, &rt->task_mutex);
+        }
+        pthread_mutex_unlock(&rt->task_mutex);
+        
+        rt->flow_stats.task_ring_stall_ns += pto_get_time_ns() - stall_start;
+        rt->flow_stats.current_stall = PTO_STALL_NONE;
+    }
+}
+```
+
+**2. TensorMap Pool Flow Control**
+```c
+// In pto_tensormap_insert()
+TensorMapEntry* entry = &tm->entry_pool[tm->pool_head];
+if (entry->in_bucket && entry->producer_task_id >= rt->last_task_alive) {
+    // Entry still in use by live task - wait
+    if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
+        rt->flow_stats.current_stall = PTO_STALL_TENSORMAP_POOL;
+        rt->flow_stats.tensormap_pool_stalls++;
+        
+        while (entry->in_bucket && entry->producer_task_id >= rt->last_task_alive) {
+            pthread_cond_wait(&rt->tensormap_not_full, &rt->task_mutex);
+            tm->last_task_alive = rt->last_task_alive;  // Refresh
+        }
+        
+        rt->flow_stats.current_stall = PTO_STALL_NONE;
+    }
+}
+```
+
+**3. DepList Pool Flow Control**
+```c
+// In pto_dep_list_alloc_one_locked()
+int32_t next = (rt->dep_list_top + 1) % PTO_DEP_LIST_POOL_SIZE;
+if (next == rt->dep_list_tail) {
+    if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
+        rt->flow_stats.current_stall = PTO_STALL_DEPLIST_POOL;
+        rt->flow_stats.deplist_pool_stalls++;
+        
+        while (next == rt->dep_list_tail) {
+            pthread_cond_wait(&rt->deplist_not_full, &rt->task_mutex);
+            next = (rt->dep_list_top + 1) % PTO_DEP_LIST_POOL_SIZE;
+        }
+        
+        rt->flow_stats.current_stall = PTO_STALL_NONE;
+    }
+}
+```
+
+**4. Heap Ring Flow Control**
+```c
+// In pto_heap_alloc_locked()
+while (1) {
+    // Try to allocate...
+    if (/* no space */) {
+        if (rt->runtime_mode == PTO_MODE_EXECUTE || rt->runtime_mode == PTO_MODE_SIMULATE) {
+            if (!stall_recorded) {
+                rt->flow_stats.current_stall = PTO_STALL_HEAP_RING;
+                rt->flow_stats.heap_ring_stalls++;
+                stall_start = pto_get_time_ns();
+                stall_recorded = true;
+            }
+            pthread_cond_wait(&rt->heap_not_full, &rt->task_mutex);
+            continue;
+        }
+        return NULL;  // Non-threaded mode: fail immediately
+    }
+    // Success - record stall time if we waited
+    if (stall_recorded) {
+        rt->flow_stats.heap_ring_stall_ns += pto_get_time_ns() - stall_start;
+        rt->flow_stats.current_stall = PTO_STALL_NONE;
+    }
+    return ptr;
+}
+```
+
+**5. Resource Release and Broadcast**
+```c
+// In scheduler task completion path
+bool window_advanced = pto_advance_last_task_alive_locked(rt);
+if (window_advanced) {
+    // Wake up ALL blocked orchestrator threads
+    pthread_cond_broadcast(&rt->window_not_full);
+    pthread_cond_broadcast(&rt->tensormap_not_full);
+    pthread_cond_broadcast(&rt->deplist_not_full);
+    pthread_cond_broadcast(&rt->heap_not_full);
+}
+```
+
+> **Note**: For detailed flow control statistics API and performance tuning guidance, see the [Flow Control and Backpressure Mechanism](#flow-control-and-backpressure-mechanism) section.
 
 #### 4. Heap Ring Allocation (with Wrap-Around and Stall)
 
@@ -2636,14 +3071,167 @@ int32_t pto_get_scope_depth(PTORuntime* rt) {
 
 Called by Orchestrator to submit a task. Uses ring buffer allocation for both task slot and output buffer. **May stall** if rings are full (back-pressure from Scheduler).
 
+##### CRITICAL: Output Buffer Memory Allocation Mechanism
+
+**All intermediate data memory allocation is handled by `pto_submit_task()` for OUTPUT parameters.**
+
+The key insight is that the runtime (not the orchestration function) is responsible for allocating output buffers from the HeapRing. This design requires:
+
+1. **OUTPUT parameter must be a pointer-to-pointer (`void**`)** - The orchestration function passes a reference to a buffer pointer, allowing the runtime to write back the allocated address.
+
+2. **Runtime allocates from HeapRing** - During `pto_submit_task()`, the runtime allocates a packed buffer for all outputs and writes the allocated addresses back to the caller's references.
+
+3. **Orchestration function receives allocated address** - After `pto_submit_task()` returns, the orchestration function's output buffer variable contains the runtime-allocated address.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    OUTPUT BUFFER ALLOCATION FLOW                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Orchestration Function                    Runtime (pto_submit_task)        │
+│   ──────────────────────                    ─────────────────────────        │
+│                                                                              │
+│   void* P = NULL;     ─────────────────────►  1. Receives &P (pointer-to-   │
+│                                                   pointer to output buffer)  │
+│   pto_submit_task(rt, "gemm", {                                              │
+│       PTO_INPUT(A, ...),                      2. Calculate total output      │
+│       PTO_INPUT(B, ...),                         size from all OUTPUT params │
+│       PTO_OUTPUT(&P, size)  ◄──────────────                                  │
+│   });                                         3. Allocate packed buffer      │
+│                                                  from HeapRing (may stall)   │
+│                                                                              │
+│   // After submit_task returns:               4. Write allocated address     │
+│   // P now points to allocated buffer            back to *(&P) = P           │
+│                                                  ───────────────────────►    │
+│   pto_submit_task(rt, "add", {                                               │
+│       PTO_INPUT(P, ...),  ◄── Uses the       5. Register allocated address   │
+│       ...                     runtime-           in TensorMap for dependency │
+│   });                         allocated          tracking                    │
+│                               address                                        │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this design?**
+
+1. **Centralized memory management** - Runtime manages the HeapRing, tracking allocations and deallocations for proper lifecycle management.
+
+2. **Automatic dependency tracking** - The TensorMap uses the runtime-allocated address to track producer-consumer relationships across tasks.
+
+3. **Flow control** - If HeapRing is full, `pto_submit_task()` can stall (back-pressure), preventing unbounded memory growth.
+
+4. **Packed buffer optimization** - Multiple outputs can be packed into a single contiguous allocation, improving cache locality.
+
+##### Two Memory Allocation Modes
+
+There are two valid approaches for managing intermediate buffers:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   MODE A vs MODE B: Buffer Management                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   MODE A: Pre-allocated Large Buffer (Current bgemm implementation)          │
+│   ═══════════════════════════════════════════════════════════════           │
+│                                                                              │
+│   // In main():                                                              │
+│   float* P = calloc(max_tiles * tile_size, sizeof(float));  // Pre-allocate │
+│                                                                              │
+│   // In orchestration:                                                       │
+│   pto_task_add_output(rt, t, P, tile_index, 0, 32, 128);    // Use offset    │
+│                                                                              │
+│   Pros: Simple, no dynamic allocation overhead                               │
+│   Cons: Must know max memory at compile time, wastes memory if over-sized   │
+│   Use when: Static task graph, known memory bounds                           │
+│                                                                              │
+│   ─────────────────────────────────────────────────────────────────────────  │
+│                                                                              │
+│   MODE B: Runtime Dynamic Allocation (Document-described design)             │
+│   ══════════════════════════════════════════════════════════════            │
+│                                                                              │
+│   // In orchestration:                                                       │
+│   void* P = NULL;                                                            │
+│   pto_submit_task(rt, "gemm", {                                              │
+│       PTO_OUTPUT(&P, tile_idx, size)    // Runtime allocates, writes back   │
+│   });                                                                        │
+│   // P now contains runtime-allocated address                                │
+│                                                                              │
+│   Pros: Flexible, memory-efficient, supports dynamic task graphs             │
+│   Cons: Requires pointer-to-pointer parameter, more complex                  │
+│   Use when: Dynamic task graph, memory-constrained, unknown bounds           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Impact on Code Generation (`pto_compile.py`):**
+
+To support Mode B (dynamic allocation), the code generator needs to:
+
+1. **Generate `void* P = NULL;` declarations** for intermediate buffers
+2. **Generate `PTO_OUTPUT(&P, ...)` calls** with pointer-to-pointer
+3. **Use `P` (runtime-allocated address) in subsequent INPUT calls**
+
+Example generated code for Mode B:
+
+```c
+// Mode B: Dynamic allocation (generated by updated pto_compile.py)
+void bgemm_dynamic(PTORuntime* rt, void* user_data) {
+    void** params = (void**)user_data;
+    float* A = (float*)params[0];
+    float* B = (float*)params[1];
+    float* C = (float*)params[2];
+    // NOTE: P is NOT passed from outside - will be dynamically allocated
+    
+    for (...) {
+        void* P = NULL;  // Local variable, will receive runtime allocation
+        
+        // gemm_tile: runtime allocates P and writes back to &P
+        pto_submit_task(rt, "gemm_tile", {
+            PTO_INPUT(A, a_idx, size),
+            PTO_INPUT(B, b_idx, size),
+            PTO_OUTPUT(&P, c_idx, size)   // &P passed, runtime writes allocation
+        });
+        // Now P contains runtime-allocated address
+        
+        // tile_add: uses P (the allocated address)
+        pto_submit_task(rt, "tile_add", {
+            PTO_INPUT(C, c_idx, size),
+            PTO_INPUT(P, c_idx, size),    // P is now the allocated buffer
+            PTO_INOUT(&C, c_idx, size)
+        });
+    }
+}
+```
+
+**Current Implementation Note:**
+
+The current `examples/bgemm` uses **Mode A** (pre-allocated buffer). To use **Mode B**, 
+updates are needed in:
+- `pto_bgemm_func.py` - Change memref("P", ...) to local variable pattern
+- `pto_codegen_*.py` - Generate void* declarations and PTO_OUTPUT with &
+- Runtime API - Support buffer_ref (void**) writeback
+
 ```c
 // InCore function call parameter descriptor
 typedef struct TaskParam {
     enum { PARAM_INPUT, PARAM_OUTPUT, PARAM_INOUT } type;
-    void* buffer;                 // Buffer base pointer
-    int32_t tile_index;           // Tile index
-    int32_t size;                 // Size in bytes
+    
+    // For INPUT:  buffer is the data source (read-only)
+    // For OUTPUT: buffer is a POINTER TO POINTER (void**), runtime writes allocated address
+    // For INOUT:  buffer is the data source AND runtime writes allocated address back
+    union {
+        void*  buffer;        // For INPUT: direct buffer pointer
+        void** buffer_ref;    // For OUTPUT/INOUT: reference to receive allocated address
+    };
+    
+    int32_t tile_index;       // Tile index for TensorMap lookup
+    int32_t size;             // Size in bytes
 } TaskParam;
+
+// Convenience macros for parameter construction
+#define PTO_INPUT(buf, idx, sz)    { .type = PARAM_INPUT,  .buffer = (buf), .tile_index = (idx), .size = (sz) }
+#define PTO_OUTPUT(ref, idx, sz)   { .type = PARAM_OUTPUT, .buffer_ref = (void**)(ref), .tile_index = (idx), .size = (sz) }
+#define PTO_INOUT(ref, idx, sz)    { .type = PARAM_INOUT,  .buffer_ref = (void**)(ref), .tile_index = (idx), .size = (sz) }
 
 // Submit a task with InCore function and parameters
 // May STALL if task ring or heap ring is full (waiting for Scheduler to free space)
@@ -2771,7 +3359,7 @@ int32_t pto_submit_task(PTORuntime* rt,
         sm->heap_top = rt->heap_ring.top;
     }
     
-    // === STEP 4: Second pass - register outputs in TensorMap ===
+    // === STEP 4: Second pass - register outputs in TensorMap AND write back addresses ===
     int32_t output_idx = 0;
     for (int i = 0; i < num_params; i++) {
         TaskParam* p = &params[i];
@@ -2779,7 +3367,22 @@ int32_t pto_submit_task(PTORuntime* rt,
         if (p->type == PARAM_OUTPUT || p->type == PARAM_INOUT) {
             // Compute actual buffer address for this output
             void* output_addr = (char*)task->packed_buffer_base + task->output_offsets[output_idx];
-            TensorRegion region = {output_addr, p->tile_index, 0, p->size};
+            
+            // CRITICAL: Write allocated address back to caller's buffer reference
+            // This allows orchestration function to use the runtime-allocated address
+            // in subsequent task submissions (e.g., as input to dependent tasks)
+            if (p->buffer_ref != NULL) {
+                *(p->buffer_ref) = output_addr;  // Write back to caller: *(&P) = output_addr
+            }
+            
+            // Register in TensorMap using the ORIGINAL buffer reference for dependency tracking
+            // This allows consumers to find the producer via their local variable address
+            TensorRegion region = {
+                .base_ptr = p->buffer_ref,    // Use original reference for TensorMap lookup
+                .tile_index = p->tile_index,
+                .offset = 0,
+                .size = p->size
+            };
             
             // Register in TensorMap: this region is produced by task_id
             tensormap_insert(&rt->tensor_map, &region, task_id);
@@ -3733,3 +4336,997 @@ TENSORMAP_NUM_BUCKETS = TASK_WINDOW_SIZE         // 1024 buckets for good hash d
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Runtime2 Multi-Threaded Implementation (ascend_a2a3_sim)
+
+This section describes the actual multi-threaded implementation for the `ascend_a2a3_sim` platform, where Orchestrator, Scheduler, and Workers run in **independent threads**.
+
+### 1. Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MULTI-THREADED ARCHITECTURE                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌─────────────────────┐                                                    │
+│   │  MAIN THREAD        │                                                    │
+│   │  ───────────────    │                                                    │
+│   │  • Create runtime   │                                                    │
+│   │  • Start threads    │                                                    │
+│   │  • Wait completion  │                                                    │
+│   │  • Cleanup          │                                                    │
+│   └─────────┬───────────┘                                                    │
+│             │ pthread_create()                                               │
+│             ▼                                                                │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                      WORKER THREADS                                  │   │
+│   │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐                 │   │
+│   │  │ Cube 0  │  │ Cube 1  │  │ Vector 0│  │ Vector 1│  ...            │   │
+│   │  │ ─────── │  │ ─────── │  │ ──────  │  │ ──────  │                 │   │
+│   │  │ Wait on │  │ Wait on │  │ Wait on │  │ Wait on │                 │   │
+│   │  │ ready_q │  │ ready_q │  │ ready_q │  │ ready_q │                 │   │
+│   │  │ Execute │  │ Execute │  │ Execute │  │ Execute │                 │   │
+│   │  │ Signal  │  │ Signal  │  │ Signal  │  │ Signal  │                 │   │
+│   │  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘                 │   │
+│   └───────┼────────────┼────────────┼────────────┼──────────────────────┘   │
+│           │            │            │            │                           │
+│           └────────────┴────────────┴────────────┘                           │
+│                                │                                             │
+│                    Completion Queue (MPSC)                                   │
+│                                │                                             │
+│                                ▼                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  SCHEDULER THREAD                                                    │   │
+│   │  ─────────────────                                                   │   │
+│   │  Loop:                                                               │   │
+│   │    1. Poll current_task_index for new tasks                          │   │
+│   │    2. Initialize task state, enqueue ready tasks                     │   │
+│   │    3. Process completion queue                                       │   │
+│   │    4. Update dependencies, advance ring pointers                     │   │
+│   │    5. Signal all_done when orchestrator_done && all consumed         │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                ▲                                             │
+│                                │ Reads current_task_index                    │
+│                                │                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  ORCHESTRATOR THREAD                                                 │   │
+│   │  ────────────────────                                                │   │
+│   │  • Execute user orchestration function                               │   │
+│   │  • Submit tasks (writes to Task Ring)                                │   │
+│   │  • Call scope_begin/scope_end                                        │   │
+│   │  • Set orchestrator_done flag                                        │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. Thread Context Structure
+
+```c
+/**
+ * Thread context for managing all runtime threads
+ */
+typedef struct {
+    // Orchestrator thread
+    pthread_t orchestrator_thread;
+    void* (*orchestrator_func)(void*);
+    void* orchestrator_arg;
+    volatile bool orchestrator_done;
+    
+    // Scheduler thread
+    pthread_t scheduler_thread;
+    volatile bool scheduler_running;
+    
+    // Worker threads
+    PTO2WorkerContext workers[PTO2_MAX_WORKERS];
+    int32_t num_cube_workers;
+    int32_t num_vector_workers;
+    int32_t num_workers;              // Total workers
+    
+    // Ready queue synchronization (per worker type)
+    pthread_mutex_t ready_mutex[PTO2_NUM_WORKER_TYPES];
+    pthread_cond_t  ready_cond[PTO2_NUM_WORKER_TYPES];
+    
+    // Completion queue (workers -> scheduler)
+    PTO2CompletionQueue completion_queue;
+    pthread_cond_t completion_cond;   // Signal scheduler when completions ready
+    
+    // Global shutdown signal
+    volatile bool shutdown;
+    
+    // All-done signaling
+    pthread_mutex_t done_mutex;
+    pthread_cond_t  all_done_cond;
+    volatile bool   all_done;
+    
+    // Cycle counter for simulation (atomic)
+    volatile int64_t global_cycle;
+    
+} PTO2ThreadContext;
+```
+
+### 3. Synchronization Mechanisms
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    SYNCHRONIZATION SUMMARY                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   DATA STRUCTURE              SYNC MECHANISM          ACCESS PATTERN         │
+│   ══════════════              ══════════════          ══════════════         │
+│                                                                              │
+│   Shared Memory Pointers                                                     │
+│   ──────────────────────                                                     │
+│   current_task_index          volatile + atomic       Orch WRITE, Sched READ │
+│   last_task_alive             volatile + atomic       Sched WRITE, Orch READ │
+│   heap_top/heap_tail          volatile + atomic       WRITE/READ each side   │
+│   orchestrator_done           volatile + atomic       Orch WRITE, Sched READ │
+│                                                                              │
+│   Task Descriptors                                                           │
+│   ────────────────                                                           │
+│   Most fields                 Write-before-publish    Orch WRITE → Sched READ│
+│   fanout_head/count           per-task spinlock       Orch/Sched R/W         │
+│                                                                              │
+│   Ready Queues                                                               │
+│   ────────────                                                               │
+│   queue[worker_type]          mutex + cond_var        Sched PUSH, Worker POP │
+│                                                                              │
+│   Completion Queue                                                           │
+│   ────────────────                                                           │
+│   entries[]                   mutex (MPSC)            Workers PUSH, Sched POP│
+│                                                                              │
+│   Scheduler Private State                                                    │
+│   ───────────────────────                                                    │
+│   task_state[]                NO SYNC (private)       Sched only             │
+│   fanin_refcount[]            NO SYNC (private)       Sched only             │
+│   fanout_refcount[]           NO SYNC (private)       Sched only             │
+│                                                                              │
+│   Global Control                                                             │
+│   ──────────────                                                             │
+│   shutdown                    volatile                Main → All threads     │
+│   all_done                    mutex + cond_var        Sched → Main           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4. Thread-Safe Ready Queue Implementation
+
+```c
+/**
+ * Push task to ready queue with thread synchronization
+ */
+bool pto2_ready_queue_push_threadsafe(PTO2ReadyQueue* queue, int32_t task_id,
+                                       pthread_mutex_t* mutex, pthread_cond_t* cond) {
+    pthread_mutex_lock(mutex);
+    
+    bool success = pto2_ready_queue_push(queue, task_id);
+    
+    if (success) {
+        // Signal one waiting worker that a task is available
+        pthread_cond_signal(cond);
+    }
+    
+    pthread_mutex_unlock(mutex);
+    return success;
+}
+
+/**
+ * Pop task from ready queue with blocking wait
+ */
+int32_t pto2_ready_queue_pop_threadsafe(PTO2ReadyQueue* queue,
+                                         pthread_mutex_t* mutex, pthread_cond_t* cond,
+                                         volatile bool* shutdown) {
+    pthread_mutex_lock(mutex);
+    
+    // Wait while queue is empty and not shutting down
+    while (pto2_ready_queue_empty(queue) && !(*shutdown)) {
+        pthread_cond_wait(cond, mutex);
+    }
+    
+    // Check if we woke up due to shutdown
+    if (*shutdown && pto2_ready_queue_empty(queue)) {
+        pthread_mutex_unlock(mutex);
+        return -1;
+    }
+    
+    int32_t task_id = pto2_ready_queue_pop(queue);
+    
+    pthread_mutex_unlock(mutex);
+    return task_id;
+}
+```
+
+### 5. Worker Thread Implementation
+
+```c
+/**
+ * Worker thread main function (simulation mode)
+ */
+void* pto2_worker_thread_func_sim(void* arg) {
+    PTO2WorkerContext* worker = (PTO2WorkerContext*)arg;
+    PTO2RuntimeThreaded* rt = (PTO2RuntimeThreaded*)worker->runtime;
+    PTO2ThreadContext* ctx = &rt->thread_ctx;
+    
+    while (!worker->shutdown) {
+        // Get next task (blocks if queue empty)
+        int32_t task_id = pto2_worker_get_task(worker);
+        if (task_id < 0) {
+            break;  // Shutdown signaled
+        }
+        
+        // Record start time
+        int64_t start_cycle = PTO2_LOAD_ACQUIRE(&ctx->global_cycle);
+        worker->task_start_cycle = start_cycle;
+        
+        // Simulate the task (estimate cycles)
+        int64_t cycles = pto2_worker_simulate_task(worker, task_id);
+        
+        // Advance global cycle counter
+        PTO2_FETCH_ADD(&ctx->global_cycle, cycles);
+        
+        // Signal completion
+        pto2_worker_task_complete(worker, task_id, cycles);
+    }
+    
+    return NULL;
+}
+```
+
+### 6. Scheduler Thread Implementation
+
+```c
+/**
+ * Scheduler thread main function
+ */
+void* pto2_scheduler_thread_func(void* arg) {
+    PTO2SchedulerContext* ctx = (PTO2SchedulerContext*)arg;
+    PTO2SchedulerState* sched = ctx->scheduler;
+    PTO2ThreadContext* thread_ctx = ctx->thread_ctx;
+    
+    int32_t last_processed_task = 0;
+    
+    while (!thread_ctx->shutdown) {
+        bool did_work = false;
+        
+        // === STEP 1: Process new tasks from orchestrator ===
+        // Poll current_task_index and initialize scheduler state
+        int32_t new_tasks = process_new_tasks_threadsafe(sched, thread_ctx, 
+                                                          &last_processed_task);
+        if (new_tasks > 0) did_work = true;
+        
+        // === STEP 2: Process completions from workers ===
+        int32_t completions = pto2_scheduler_process_completions(ctx);
+        if (completions > 0) did_work = true;
+        
+        // === STEP 3: Advance ring pointers ===
+        pto2_scheduler_advance_ring_pointers(sched);
+        
+        // === STEP 4: Check if all done ===
+        if (pto2_scheduler_is_done(sched)) {
+            pthread_mutex_lock(&thread_ctx->done_mutex);
+            thread_ctx->all_done = true;
+            pthread_cond_broadcast(&thread_ctx->all_done_cond);
+            pthread_mutex_unlock(&thread_ctx->done_mutex);
+            break;
+        }
+        
+        // If no work, wait with timeout to avoid busy-waiting
+        if (!did_work) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += 1000000;  // 1ms timeout
+            if (ts.tv_nsec >= 1000000000) {
+                ts.tv_sec++;
+                ts.tv_nsec -= 1000000000;
+            }
+            
+            pthread_mutex_lock(&thread_ctx->done_mutex);
+            pthread_cond_timedwait(&thread_ctx->completion_cond, 
+                                   &thread_ctx->done_mutex, &ts);
+            pthread_mutex_unlock(&thread_ctx->done_mutex);
+        }
+    }
+    
+    return NULL;
+}
+```
+
+### 7. Multi-Threaded vs Single-Threaded Mode
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                SINGLE-THREADED vs MULTI-THREADED                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   SINGLE-THREADED (Original)           MULTI-THREADED (New)                  │
+│   ══════════════════════════           ═════════════════════                 │
+│                                                                              │
+│   main() {                             main() {                              │
+│       // Phase 1: Build graph              rt = create_threaded();           │
+│       for (all tasks)                      run_threaded(rt, orch_func);      │
+│           submit_task();                   // ^ starts all threads           │
+│       orchestration_done();                // ^ waits for completion         │
+│                                            destroy_threaded(rt);             │
+│       // Phase 2: Execute              }                                     │
+│       sim_run(); // after phase 1                                            │
+│   }                                    orch_func(rt) {                       │
+│                                            for (all tasks)                   │
+│                                                submit_task();                │
+│   Problem:                                 // Scheduler processes            │
+│   - Deadlock when task ring full           // tasks concurrently!            │
+│   - sim_run() starts AFTER all         }                                     │
+│     tasks submitted                                                          │
+│   - No flow control testing            Benefit:                              │
+│                                        - True concurrency                    │
+│                                        - Flow control/back-pressure works    │
+│                                        - Realistic simulation                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 8. Key Design Decisions
+
+#### 8.1 Orchestrator-Scheduler Decoupling
+
+In multi-threaded mode, the orchestrator **does not** directly call scheduler methods for task initialization:
+
+```c
+// In multi-threaded mode:
+pto2_orchestrator_set_scheduler_mode(&rt->base.orchestrator, 
+                                      &rt->base.scheduler, 
+                                      false);  // init_on_submit = false
+
+// Scheduler thread polls current_task_index to discover new tasks
+// This avoids race condition where:
+//   - Orchestrator calls scheduler_init_task()
+//   - Scheduler thread also processes the same task
+```
+
+However, `scope_end` **still** calls `pto2_scheduler_on_scope_end()` because:
+- It only modifies `fanout_refcount[]` (scheduler-private)
+- Workers don't modify refcounts (they signal via completion queue)
+- Scheduler is the sole writer of refcount arrays
+
+#### 8.2 Avoiding fanout_refcount Reset
+
+Critical fix for multi-threaded mode:
+
+```c
+// In process_new_tasks_threadsafe():
+sched->task_state[slot] = PTO2_TASK_PENDING;
+sched->fanin_refcount[slot] = 0;
+// sched->fanout_refcount[slot] = 0;  // DO NOT reset!
+// ^ scope_end may have already incremented this before scheduler processes
+```
+
+Timeline that causes bug if refcount is reset:
+```
+T1: Orchestrator submits tasks 0-3
+T2: Orchestrator calls scope_end() → fanout_refcount[0..3] += 1
+T3: Scheduler processes new tasks → if reset, fanout_refcount = 0 (BUG!)
+T4: Tasks complete but never reach CONSUMED state
+```
+
+### 9. Usage Example
+
+```c
+// User orchestration function
+void bgemm_orchestration(PTO2Runtime* rt, void* arg) {
+    BgemmParams* p = (BgemmParams*)arg;
+    
+    for (int b = 0; b < p->batch; b++) {
+        pto2_rt_scope_begin(rt);
+        
+        for (int m = 0; m < p->m_tiles; m++) {
+            for (int n = 0; n < p->n_tiles; n++) {
+                pto2_rt_scope_begin(rt);
+                
+                for (int k = 0; k < p->k_tiles; k++) {
+                    // Submit gemm_tile (CUBE)
+                    pto2_rt_submit_task(rt, 0, PTO2_WORKER_CUBE, NULL,
+                                        "gemm_tile", gemm_params, 3);
+                    
+                    // Submit tile_add (VECTOR)
+                    pto2_rt_submit_task(rt, 1, PTO2_WORKER_VECTOR, NULL,
+                                        "tile_add", add_params, 3);
+                }
+                
+                pto2_rt_scope_end(rt);
+            }
+        }
+        
+        pto2_rt_scope_end(rt);
+    }
+}
+
+int main() {
+    // Create threaded runtime
+    PTO2RuntimeThreaded* rt = pto2_runtime_create_threaded(
+        4,    // num_cube_workers
+        4,    // num_vector_workers
+        true  // simulation_mode
+    );
+    
+    // Run with multi-threading
+    BgemmParams params = { .batch = 4, .m_tiles = 4, ... };
+    pto2_runtime_run_threaded(rt, bgemm_orchestration, &params);
+    
+    // Write trace
+    pto2_runtime_write_trace(rt, "trace.json");
+    
+    // Cleanup
+    pto2_runtime_destroy_threaded(rt);
+    return 0;
+}
+```
+
+### 10. Performance Results
+
+Test configuration: BGEMM with batch=4, m=4, n=4, k=4 (512 tasks)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PERFORMANCE SUMMARY                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Metric                      Value                                          │
+│   ══════                      ═════                                          │
+│   Total tasks:                512                                            │
+│   Total time:                 2.191 ms                                       │
+│   Throughput:                 233.71 tasks/ms                                │
+│   Simulated cycles:           38,400                                         │
+│                                                                              │
+│   Worker Statistics:                                                         │
+│   ──────────────────                                                         │
+│   CUBE workers (4):           256 tasks total, avg 100 cycles/task           │
+│   VECTOR workers (4):         256 tasks total, avg 50 cycles/task            │
+│                                                                              │
+│   Resource Usage:                                                            │
+│   ───────────────                                                            │
+│   Heap Ring:                  65,536 / 67,108,864 bytes                      │
+│   Task Ring:                  512 / 1024 slots                               │
+│   DepList Pool:               896 / 8192 entries                             │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 11. Runtime Creation APIs
+
+The runtime2 provides two APIs for creating multi-threaded runtime instances:
+
+#### Standard Creation API
+
+```c
+/**
+ * Create a threaded runtime with default resource sizes
+ * 
+ * Uses compile-time constants from pto_runtime2_types.h:
+ *   - PTO2_TASK_WINDOW_SIZE (default: 1024)
+ *   - PTO2_HEAP_SIZE (default: 64MB)
+ *   - PTO2_DEP_LIST_POOL_SIZE (default: 8192)
+ * 
+ * @param num_cube_workers   Number of CUBE worker threads (e.g., 4)
+ * @param num_vector_workers Number of VECTOR worker threads (e.g., 4)
+ * @param simulation_mode    true = cycle simulation, false = real execution
+ * @return Runtime context, or NULL on failure
+ */
+PTO2RuntimeThreaded* pto2_runtime_create_threaded(
+    int32_t num_cube_workers,
+    int32_t num_vector_workers,
+    bool simulation_mode
+);
+```
+
+**Example:**
+```c
+// Simple creation with defaults
+PTO2RuntimeThreaded* rt = pto2_runtime_create_threaded(4, 4, true);
+```
+
+#### Custom Creation API
+
+```c
+/**
+ * Create a threaded runtime with custom resource sizes
+ * 
+ * Use this API when:
+ *   - Default task_window_size causes deadlock (see Flow Control Deadlock section)
+ *   - Workload requires larger heap or dependency pools
+ *   - Fine-tuning resource usage for specific algorithms
+ * 
+ * @param num_cube_workers   Number of CUBE worker threads
+ * @param num_vector_workers Number of VECTOR worker threads
+ * @param simulation_mode    true = cycle simulation, false = real execution
+ * @param task_window_size   Task Ring size (MUST be power of 2)
+ * @param heap_size          Heap Ring size in bytes
+ * @param dep_list_size      DepList pool size (number of entries)
+ * @return Runtime context, or NULL on failure
+ */
+PTO2RuntimeThreaded* pto2_runtime_create_threaded_custom(
+    int32_t num_cube_workers,
+    int32_t num_vector_workers,
+    bool simulation_mode,
+    int32_t task_window_size,
+    int32_t heap_size,
+    int32_t dep_list_size
+);
+```
+
+**Example - Avoiding Deadlock:**
+```c
+// BGEMM with batch=2, m=8, n=8, k=8 generates 2048 tasks
+// Default window (1024) causes deadlock!
+// Solution: Use custom API with larger window
+
+PTO2RuntimeThreaded* rt = pto2_runtime_create_threaded_custom(
+    4,                      // num_cube_workers
+    4,                      // num_vector_workers
+    true,                   // simulation_mode
+    4096,                   // task_window_size (increased from 1024!)
+    64 * 1024 * 1024,       // heap_size (64MB)
+    8192                    // dep_list_size
+);
+
+if (!rt) {
+    fprintf(stderr, "Failed to create runtime\n");
+    return 1;
+}
+
+// Run orchestration
+pto2_runtime_run_threaded(rt, bgemm_orchestration, &params);
+
+// Cleanup
+pto2_runtime_destroy_threaded(rt);
+```
+
+#### API Comparison
+
+| Feature | `pto2_runtime_create_threaded` | `pto2_runtime_create_threaded_custom` |
+|---------|-------------------------------|--------------------------------------|
+| Resource sizes | Compile-time defaults | Runtime configurable |
+| Recompilation needed | Yes (to change sizes) | No |
+| Use case | Standard workloads | Large/custom workloads |
+| Deadlock avoidance | May require recompile | Adjust at runtime |
+
+#### Sizing Guidelines
+
+```
+task_window_size:
+  - MUST be power of 2 (for efficient modulo)
+  - MUST be > max tasks in any single scope
+  - Recommended: 2x expected max concurrent tasks
+  
+  Example: BGEMM(batch=2, m=8, n=8, k=8)
+    tasks = 2 * 8 * 8 * 8 * 2 = 2048
+    min window = 2049
+    recommended = 4096 (power of 2, with headroom)
+
+heap_size:
+  - Total memory for all task output buffers
+  - Calculate: max_concurrent_tasks * avg_output_size
+  
+dep_list_size:
+  - Pool for dependency list entries
+  - Calculate: max_concurrent_tasks * avg_fanout
+```
+
+### 12. File Structure
+
+```
+src/runtime2/
+├── pto_runtime2_types.h      # Core types + thread context definitions
+├── pto_runtime2.h/c          # Base runtime (single-threaded)
+├── pto_runtime2_threaded.h/c # Multi-threaded runtime extension
+├── pto_worker.h/c            # Worker thread implementation
+├── pto_scheduler.h/c         # Scheduler + thread-safe operations
+├── pto_orchestrator.h/c      # Orchestrator + multi-thread mode support
+├── pto_shared_memory.h/c     # Shared memory structures
+├── pto_ring_buffer.h/c       # Ring buffer implementations
+├── pto_tensormap.h/c         # TensorMap for dependency discovery
+└── tests/
+    └── test_bgemm_runtime2.c # BGEMM test (single/multi-threaded modes)
+```
+
+---
+
+## Flow Control and Backpressure Mechanism
+
+### Overview
+
+The PTO Runtime implements comprehensive **flow control** to handle resource exhaustion gracefully in multi-threaded execution mode. When any ring buffer runs out of space, the orchestrator thread will **block and wait** until the scheduler frees up resources by completing tasks.
+
+### Ring Buffer Flow Control Points
+
+There are **five** ring buffers that implement flow control:
+
+| Ring Buffer | Purpose | Blocking Condition |
+|-------------|---------|-------------------|
+| **Task Ring** | Sliding window of active tasks | `tasks_in_flight >= PTO_TASK_WINDOW_SIZE` |
+| **TensorMap Pool** | Tracks output tensor → producer task mapping | Entry still in use by live task |
+| **DepList Pool** | Stores fanin/fanout dependency lists | `next_offset == tail` (ring full) |
+| **Heap Ring** | Allocates packed output buffers | Insufficient contiguous space |
+| **Ready Queue** | Tasks ready for execution | Queue full |
+
+### Flow Control Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         FLOW CONTROL ARCHITECTURE                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────────────────┐           ┌──────────────────────┐              │
+│   │   Orchestrator       │           │      Scheduler       │              │
+│   │   Thread             │           │      (Workers)       │              │
+│   └──────────┬───────────┘           └──────────┬───────────┘              │
+│              │                                   │                          │
+│              ▼                                   │                          │
+│   ┌──────────────────────────────────────────────▼──────────────────────┐  │
+│   │                        Ring Buffers                                  │  │
+│   │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐       │  │
+│   │  │ Task Ring  │ │ TensorMap  │ │  DepList   │ │   Heap     │       │  │
+│   │  │            │ │   Pool     │ │   Pool     │ │   Ring     │       │  │
+│   │  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘ └─────┬──────┘       │  │
+│   │        │              │              │              │               │  │
+│   │        └──────────────┴──────────────┴──────────────┘               │  │
+│   │                              │                                       │  │
+│   └──────────────────────────────┼───────────────────────────────────────┘  │
+│                                  │                                          │
+│                                  ▼                                          │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │               Flow Control Mechanism                                 │  │
+│   │                                                                      │  │
+│   │   Orchestrator WRITE:              Scheduler ADVANCE:                │  │
+│   │   • Allocate task slot    ◄────►   • last_task_alive (completed)    │  │
+│   │   • Insert TensorMap      ◄────►   • TensorMap entries invalidated   │  │
+│   │   • Allocate DepList      ◄────►   • dep_list_tail                   │  │
+│   │   • Allocate heap buffer  ◄────►   • heap_tail                       │  │
+│   │                                                                      │  │
+│   │   If resource exhausted:           On task completion:               │  │
+│   │   • Record stall reason            • Advance pointers                │  │
+│   │   • pthread_cond_wait()            • pthread_cond_broadcast()        │  │
+│   │                                                                      │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Stall Tracking and Statistics
+
+The runtime tracks detailed statistics about flow control stalls for performance tuning:
+
+```c
+// Stall reasons enumeration
+typedef enum {
+    PTO_STALL_NONE = 0,           // No stall
+    PTO_STALL_TASK_RING,          // Task window full
+    PTO_STALL_TENSORMAP_POOL,     // TensorMap pool full
+    PTO_STALL_DEPLIST_POOL,       // DepList pool full
+    PTO_STALL_HEAP_RING,          // Heap full
+    PTO_STALL_READY_QUEUE,        // Ready queue full
+} PTOStallReason;
+
+// Flow control statistics structure
+typedef struct {
+    // Stall counts per resource
+    int64_t task_ring_stalls;         // Times blocked on task window
+    int64_t tensormap_pool_stalls;    // Times blocked on TensorMap pool
+    int64_t deplist_pool_stalls;      // Times blocked on DepList pool
+    int64_t heap_ring_stalls;         // Times blocked on heap
+    int64_t ready_queue_stalls;       // Times blocked on ready queue
+    
+    // Total stall time (nanoseconds)
+    int64_t task_ring_stall_ns;
+    int64_t tensormap_pool_stall_ns;
+    int64_t deplist_pool_stall_ns;
+    int64_t heap_ring_stall_ns;
+    int64_t ready_queue_stall_ns;
+    
+    // High water marks
+    int32_t task_ring_hwm;            // Max tasks in flight
+    int32_t tensormap_pool_hwm;       // Max TensorMap entries used
+    int32_t deplist_pool_hwm;         // Max DepList entries used
+    int32_t heap_hwm;                 // Max heap bytes allocated
+    int32_t ready_queue_hwm;          // Max ready queue size
+    
+    // Current stall state
+    volatile PTOStallReason current_stall;
+} PTOFlowControlStats;
+```
+
+### Flow Control API
+
+```c
+// Get flow control statistics
+const PTOFlowControlStats* pto_get_flow_stats(PTORuntime* rt);
+
+// Reset statistics
+void pto_reset_flow_stats(PTORuntime* rt);
+
+// Print detailed statistics with recommendations
+void pto_print_flow_stats(PTORuntime* rt);
+
+// Get current stall reason (useful for debugging)
+PTOStallReason pto_get_current_stall(PTORuntime* rt);
+
+// Get stall reason name
+const char* pto_stall_reason_name(PTOStallReason reason);
+```
+
+### Example Statistics Output
+
+```
+[PTO Flow Control Statistics]
+================================================================================
+
+Stall Counts (times orchestration was blocked):
+  Task Ring (window full):              5
+  TensorMap Pool:                       0
+  DepList Pool:                         0
+  Heap Ring:                           12
+  Ready Queue:                          0
+
+Stall Times (nanoseconds):
+  Task Ring (window full):        1234567 ns  (1.23 ms)
+  TensorMap Pool:                       0 ns
+  DepList Pool:                         0 ns
+  Heap Ring:                      5678901 ns  (5.68 ms)
+  Ready Queue:                          0 ns
+
+Total Stall Time:                 6913468 ns  (6.91 ms)
+
+High Water Marks (peak usage):
+  Task Ring:           7890 / 8192  (96.3%)
+  TensorMap Pool:    120000 / 262144  (45.8%)
+  DepList Pool:       50000 / 131072  (38.1%)
+  Heap Ring:       900000000 / 1073741824 bytes  (83.8%)
+  Ready Queue:           50 / 65536  (0.1%)
+
+Sizing Recommendations:
+  [!] Task Ring was exhausted 5 times.
+      Consider increasing PTO_TASK_WINDOW_SIZE (current: 8192)
+  [!] Heap Ring was exhausted 12 times.
+      Consider increasing PTO_HEAP_SIZE_BYTES (current: 1024 MB)
+  [WARN] Task Ring usage reached 96.3% - consider increasing size
+
+================================================================================
+```
+
+### Performance Tuning Based on Statistics
+
+| Statistic | Interpretation | Action |
+|-----------|---------------|--------|
+| High `task_ring_stalls` | Too many tasks in flight, scheduler can't keep up | Increase `PTO_TASK_WINDOW_SIZE` or optimize task granularity |
+| High `tensormap_pool_stalls` | Many output tensors, pool is too small | Increase `PTO_TENSORMAP_POOL_SIZE` |
+| High `deplist_pool_stalls` | Dense dependencies, pool is too small | Increase `PTO_DEP_LIST_POOL_SIZE` |
+| High `heap_ring_stalls` | Large output buffers, heap is too small | Increase `PTO_HEAP_SIZE_BYTES` |
+| High `ready_queue_stalls` | Many tasks ready at once, rare | Increase `PTO_MAX_READY_QUEUE` |
+| HWM > 90% | Resource approaching limit | Proactively increase size |
+| Stall time significant | Orchestrator blocked waiting | Tune resource sizes or reduce parallelism |
+
+### Condition Variables for Flow Control
+
+The runtime uses dedicated condition variables for each resource:
+
+```c
+// In PTORuntime structure
+pthread_cond_t window_not_full;       // Task ring has space
+pthread_cond_t tensormap_not_full;    // TensorMap pool has space
+pthread_cond_t deplist_not_full;      // DepList pool has space
+pthread_cond_t heap_not_full;         // Heap ring has space
+pthread_cond_t ready_queue_not_full;  // Ready queue has space
+```
+
+When the scheduler completes a task and advances `last_task_alive`, it broadcasts **all** flow control condition variables to wake up any blocked orchestrator thread:
+
+```c
+// In scheduler task completion path
+bool window_advanced = pto_advance_last_task_alive_locked(rt);
+if (window_advanced) {
+    pthread_cond_broadcast(&rt->window_not_full);
+    pthread_cond_broadcast(&rt->tensormap_not_full);
+    pthread_cond_broadcast(&rt->deplist_not_full);
+    pthread_cond_broadcast(&rt->heap_not_full);
+}
+```
+
+### Task Window Deadlock Detection (runtime2)
+
+#### The Deadlock Problem
+
+In multi-threaded mode, there is a potential **circular dependency deadlock** when `TASK_WINDOW_SIZE` is too small:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TASK WINDOW DEADLOCK SCENARIO                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. Task created with fanout_count = scope_depth (e.g., 2 for nested scope) │
+│                                                                              │
+│  2. Task completes execution (COMPLETED state)                               │
+│     └── But cannot transition to CONSUMED because:                           │
+│         fanout_refcount (0) != fanout_count (2)                              │
+│                                                                              │
+│  3. scope_end() would release references (increment fanout_refcount)         │
+│     └── But scope_end() is called by Orchestrator                            │
+│                                                                              │
+│  4. Orchestrator is BLOCKED waiting for task ring space!                     │
+│     └── Because task_window is full (active_tasks >= TASK_WINDOW_SIZE)       │
+│                                                                              │
+│  DEADLOCK:                                                                   │
+│    ┌──────────────────────────────────────────────────────────────────┐     │
+│    │                                                                   │     │
+│    │   Orchestrator ──waits for──► Task Ring Space                    │     │
+│    │        ▲                           │                              │     │
+│    │        │                           │                              │     │
+│    │   scope_end()               Requires last_task_alive              │     │
+│    │   releases refs                 to advance                        │     │
+│    │        │                           │                              │     │
+│    │        │                           ▼                              │     │
+│    │   Tasks need ◄──blocked by──  Tasks cannot                       │     │
+│    │   scope_end                    become CONSUMED                    │     │
+│    │                                                                   │     │
+│    └──────────────────────────────────────────────────────────────────┘     │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Deadlock Detection Mechanism
+
+The runtime detects this deadlock by monitoring spin-wait iterations. If the orchestrator spins for more than `PTO2_FLOW_CONTROL_SPIN_LIMIT` (100,000 iterations) without progress, it indicates a deadlock:
+
+```c
+// In pto_ring_buffer.c
+#define PTO2_FLOW_CONTROL_SPIN_LIMIT  100000
+
+int32_t pto2_task_ring_alloc(PTO2TaskRing* ring) {
+    int spin_count = 0;
+    
+    while (1) {
+        int32_t task_id = pto2_task_ring_try_alloc(ring);
+        if (task_id >= 0) {
+            return task_id;
+        }
+        
+        // Check for potential deadlock
+        if (spin_count >= PTO2_FLOW_CONTROL_SPIN_LIMIT) {
+            // Report deadlock and abort
+            pto2_report_flow_control_deadlock(ring);
+            exit(1);
+        }
+        
+        spin_count++;
+        PTO2_SPIN_PAUSE();
+    }
+}
+```
+
+#### Error Message and User Guidance
+
+When deadlock is detected, the runtime prints a detailed error message:
+
+```
+========================================
+FATAL: Flow Control Deadlock Detected!
+========================================
+
+Task Ring is FULL and no progress after 100000 spins.
+
+Flow Control Status:
+  - Current task index:  1023
+  - Last task alive:     0
+  - Active tasks:        1023
+  - Window size:         1024
+  - Window utilization:  99.9%
+
+Root Cause:
+  Tasks cannot transition to CONSUMED state because:
+  - fanout_count is initialized to scope_depth
+  - scope_end() requires orchestrator to continue
+  - But orchestrator is blocked waiting for task ring space
+  This creates a circular dependency (deadlock).
+
+Solution:
+  Increase PTO2_TASK_WINDOW_SIZE in pto_runtime2_types.h
+  Current value: 1024
+  Recommended:   2046 (at least 2x current active tasks)
+
+  Or use pto2_runtime_create_threaded_custom() with larger
+  task_window_size parameter.
+========================================
+```
+
+#### Sizing Guidelines
+
+To avoid deadlock, ensure `TASK_WINDOW_SIZE` is larger than the maximum number of tasks in any single scope:
+
+```
+TASK_WINDOW_SIZE > MAX_TASKS_IN_SCOPE
+
+Where MAX_TASKS_IN_SCOPE depends on your algorithm:
+  - BGEMM example: batch * m_tiles * n_tiles * k_tiles * 2
+  - For (2, 8, 8, 8): 2 * 8 * 8 * 8 * 2 = 2048 tasks
+  - Minimum window: 2048 + 1 = 2049
+  - Recommended:    4096 (power of 2, with headroom)
+```
+
+**Configuration Options:**
+
+1. **Compile-time** (in `pto_runtime2_types.h`):
+   ```c
+   #define PTO2_TASK_WINDOW_SIZE  4096  // Increase as needed
+   ```
+
+2. **Runtime** (using custom creation API):
+   ```c
+   PTO2RuntimeThreaded* rt = pto2_runtime_create_threaded_custom(
+       num_cube_workers,
+       num_vector_workers,
+       simulation_mode,
+       4096,    // task_window_size - increase this!
+       PTO2_HEAP_SIZE,
+       PTO2_DEP_LIST_POOL_SIZE
+   );
+   ```
+
+#### Why Not Auto-Grow the Window?
+
+The task window is a **fixed-size ring buffer** for several design reasons:
+
+1. **Deterministic memory usage** - Important for embedded/constrained environments
+2. **Zero allocation overhead** - No malloc/realloc during execution
+3. **Cache efficiency** - Fixed array is more cache-friendly than linked structures
+4. **Bounded latency** - No garbage collection pauses
+
+If your workload exceeds the window size, the recommended approach is:
+- Calculate required window size based on algorithm parameters
+- Configure appropriate size at initialization time
+- Use `pto2_runtime_create_threaded_custom()` for runtime configuration
+
+---
+
+## Single-Threaded Orchestration-Only Mode Limitations
+
+### Resource Sizing for Large Task Graphs
+
+When running in orchestration-only mode (build graph first, simulate later), **all tasks must fit in memory simultaneously** because `heap_tail` and `last_task_alive` don't advance until simulation runs.
+
+**Critical Configuration Parameters** (`pto_runtime_common.h`):
+
+```c
+// TensorMap pool must hold ALL output entries from all tasks
+// Each task with N outputs needs N TensorMap entries
+#define PTO_TENSORMAP_POOL_SIZE (PTO_TASK_WINDOW_SIZE * 32)  // 262144 entries
+
+// Heap must hold ALL packed output buffers from all tasks
+// Calculate: num_tasks_with_output * avg_output_size
+#define PTO_HEAP_SIZE_BYTES    (1024 * 1024 * 1024)  // 1GB
+```
+
+**Symptoms of Insufficient Resources**:
+
+| Resource | Symptom | Solution |
+|----------|---------|----------|
+| TensorMap pool overflow | `fanin_count = 0` for tasks that should have dependencies | Increase `PTO_TENSORMAP_POOL_SIZE` |
+| Heap overflow | `heap alloc failed` errors, tasks not submitted | Increase `PTO_HEAP_SIZE_BYTES` |
+| Task window overflow | Only partial task graph visible in dump | Increase `PTO_TASK_WINDOW_SIZE` |
+
+### Recommended Approach: Multi-Threaded Mode
+
+For large task graphs, use **multi-threaded mode** instead of orchestration-only:
+
+```c
+// Multi-threaded: orchestration and simulation run in parallel
+// - heap_tail advances as tasks complete → heap space recycled
+// - last_task_alive advances → TensorMap entries recycled
+// - Flow control works naturally via ring buffer stalls
+PTO2RuntimeThreaded* rt = pto2_runtime_create_threaded(
+    num_cube_workers, num_vector_workers, true);
+pto2_runtime_run_threaded(rt, orchestration_func, params);
+```
+
+Benefits:
+- No need for oversized buffers
+- Flow control/backpressure works correctly
+- Realistic simulation of actual hardware behavior

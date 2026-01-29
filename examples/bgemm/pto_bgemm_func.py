@@ -170,14 +170,21 @@ def create_bgemm_dynamic(module, dtype=DTYPE):
       k: K-dimension tiles (reduction)
       n: N-dimension tiles (must be multiple of SWIZZLE_N for best perf)
     """
+    # Calculate intermediate buffer size: TILE_M * TILE_N * sizeof(float)
+    tile_size_bytes = TILE_M * TILE_N * 4  # 64 * 64 * 4 = 16384 bytes
+    
     builder = (PTOFunctionBuilder("bgemm_dynamic", module=module)
         .not_in_core()
         
-        # Matrix memory references
+        # Matrix memory references (passed as parameters)
         .memref("A", MemorySpace.GM, dtype)    # [b * m * k] tiles
         .memref("B", MemorySpace.GM, dtype)    # [b * k * n] tiles
         .memref("C", MemorySpace.GM, dtype)    # [b * m * n] tiles
-        .memref("P", MemorySpace.GM, dtype)    # [b * m * n] partial products
+        
+        # Intermediate buffer for partial products (Mode B: runtime-allocated)
+        # NOT passed as parameter - runtime allocates during task submission
+        # Each task gets its own allocation, address written back to local variable
+        .intermediate_buffer("P", tile_size_bytes, dtype)
         
         # Dimension parameters
         .scalar("b", ElementType.I32)   # batch count

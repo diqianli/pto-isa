@@ -9,6 +9,8 @@
 
 #include "pto_ring_buffer.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>  // for exit()
 
 // =============================================================================
 // Heap Ring Buffer Implementation
@@ -119,15 +121,64 @@ void pto2_task_ring_init(PTO2TaskRing* ring, PTO2TaskDescriptor* descriptors,
     ring->last_alive_ptr = last_alive_ptr;
 }
 
+// Flow control spin limit - if exceeded, likely deadlock due to scope_depth/fanout_count
+#define PTO2_FLOW_CONTROL_SPIN_LIMIT  100000
+
 int32_t pto2_task_ring_alloc(PTO2TaskRing* ring) {
     // Spin-wait if window is full (back-pressure from Scheduler)
+    int spin_count = 0;
+    
     while (1) {
         int32_t task_id = pto2_task_ring_try_alloc(ring);
         if (task_id >= 0) {
             return task_id;
         }
         
-        // Window is full, spin-wait
+        // Window is full, spin-wait (with yield to prevent CPU starvation)
+        spin_count++;
+        
+        // Check for potential deadlock
+        if (spin_count >= PTO2_FLOW_CONTROL_SPIN_LIMIT) {
+            int32_t last_alive = PTO2_LOAD_ACQUIRE(ring->last_alive_ptr);
+            int32_t active_count = ring->current_index - last_alive;
+            
+            fprintf(stderr, "\n");
+            fprintf(stderr, "========================================\n");
+            fprintf(stderr, "FATAL: Flow Control Deadlock Detected!\n");
+            fprintf(stderr, "========================================\n");
+            fprintf(stderr, "\n");
+            fprintf(stderr, "Task Ring is FULL and no progress after %d spins.\n", spin_count);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "Flow Control Status:\n");
+            fprintf(stderr, "  - Current task index:  %d\n", ring->current_index);
+            fprintf(stderr, "  - Last task alive:     %d\n", last_alive);
+            fprintf(stderr, "  - Active tasks:        %d\n", active_count);
+            fprintf(stderr, "  - Window size:         %d\n", ring->window_size);
+            fprintf(stderr, "  - Window utilization:  %.1f%%\n", 
+                    100.0 * active_count / ring->window_size);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "Root Cause:\n");
+            fprintf(stderr, "  Tasks cannot transition to CONSUMED state because:\n");
+            fprintf(stderr, "  - fanout_count is initialized to scope_depth\n");
+            fprintf(stderr, "  - scope_end() requires orchestrator to continue\n");
+            fprintf(stderr, "  - But orchestrator is blocked waiting for task ring space\n");
+            fprintf(stderr, "  This creates a circular dependency (deadlock).\n");
+            fprintf(stderr, "\n");
+            fprintf(stderr, "Solution:\n");
+            fprintf(stderr, "  Increase PTO2_TASK_WINDOW_SIZE in pto_runtime2_types.h\n");
+            fprintf(stderr, "  Current value: %d\n", ring->window_size);
+            fprintf(stderr, "  Recommended:   %d (at least 2x current active tasks)\n", 
+                    active_count * 2);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "  Or use pto2_runtime_create_threaded_custom() with larger\n");
+            fprintf(stderr, "  task_window_size parameter.\n");
+            fprintf(stderr, "========================================\n");
+            fprintf(stderr, "\n");
+            
+            // Abort program
+            exit(1);
+        }
+        
         PTO2_SPIN_PAUSE();
     }
 }

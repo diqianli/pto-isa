@@ -247,7 +247,11 @@ void pto_task_complete_threadsafe(PTORuntime* rt, int32_t task_id) {
     bool all_done = (rt->total_tasks_completed >= rt->total_tasks_scheduled);
 
     if (window_advanced) {
+        // Broadcast all flow control conditions - resources may have been freed
         pthread_cond_broadcast(&rt->window_not_full);
+        pthread_cond_broadcast(&rt->tensormap_not_full);
+        pthread_cond_broadcast(&rt->deplist_not_full);
+        pthread_cond_broadcast(&rt->heap_not_full);
     }
 
     pthread_mutex_unlock(&rt->task_mutex);

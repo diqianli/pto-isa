@@ -156,6 +156,15 @@ class SymbolTable:
 # Program Representation
 # =============================================================================
 
+@dataclass 
+class IntermediateBufferInfo:
+    """Information about an intermediate buffer for Mode B allocation."""
+    name: str
+    size: int                    # Size in bytes
+    dtype: ElementType           # Data type
+    scope_local: bool = True     # If True, buffer is local to current scope (freed at scope end)
+
+
 @dataclass
 class PTOProgram:
     """
@@ -165,11 +174,13 @@ class PTOProgram:
         is_in_core: If True (default), the function runs entirely within a single core.
         is_cube: If True, this InCore function requires cube unit (matmul)
         imports: List of imported function names from other source files
+        intermediate_buffers: Dict of intermediate buffers for Mode B dynamic allocation
     """
     name: str = "main"
     tile_declarations: Dict[str, TileType] = field(default_factory=dict)
     scalar_declarations: Dict[str, ElementType] = field(default_factory=dict)
     memref_declarations: Dict[str, MemRefType] = field(default_factory=dict)
+    intermediate_buffers: Dict[str, 'IntermediateBufferInfo'] = field(default_factory=dict)
     instructions: List[PTOInstruction] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_in_core: bool = True
@@ -188,6 +199,27 @@ class PTOProgram:
                    shape: Optional[TileShape] = None):
         """Declare a memory reference."""
         self.memref_declarations[name] = MemRefType(space, dtype, shape)
+    
+    def add_intermediate_buffer(self, name: str, size: int, 
+                                 dtype: ElementType = ElementType.F32,
+                                 scope_local: bool = True):
+        """
+        Declare an intermediate buffer for Mode B dynamic allocation.
+        
+        These buffers are NOT passed as parameters - they are dynamically allocated
+        by the runtime during task submission. The orchestration function declares
+        a local variable `void* name = NULL;` and passes `&name` to PTO_OUTPUT,
+        receiving the runtime-allocated address back.
+        
+        Args:
+            name: Buffer variable name
+            size: Size in bytes
+            dtype: Element data type
+            scope_local: If True, buffer is freed when scope ends
+        """
+        self.intermediate_buffers[name] = IntermediateBufferInfo(
+            name=name, size=size, dtype=dtype, scope_local=scope_local
+        )
     
     def add_instruction(self, instr: PTOInstruction):
         """Add an instruction to the program."""

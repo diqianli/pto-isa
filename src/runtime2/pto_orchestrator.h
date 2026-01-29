@@ -55,6 +55,7 @@ typedef struct {
     // Note: In simulated mode, orchestrator and scheduler share address space
     // In real mode, they communicate via shared memory only
     PTO2SchedulerState* scheduler;  // For simulated mode only
+    bool init_task_on_submit;       // If true, call scheduler_init_task on submit
     
     // === GM HEAP (for output buffers) ===
     void*           gm_heap_base;   // Base address of GM heap
@@ -101,6 +102,18 @@ void pto2_orchestrator_reset(PTO2OrchestratorState* orch);
  */
 void pto2_orchestrator_set_scheduler(PTO2OrchestratorState* orch,
                                       PTO2SchedulerState* scheduler);
+
+/**
+ * Set scheduler reference with mode control
+ * 
+ * @param orch           Orchestrator state
+ * @param scheduler      Scheduler state
+ * @param init_on_submit If true, init task on submit (single-threaded mode)
+ *                       If false, scheduler thread polls for new tasks (multi-threaded)
+ */
+void pto2_orchestrator_set_scheduler_mode(PTO2OrchestratorState* orch,
+                                           PTO2SchedulerState* scheduler,
+                                           bool init_on_submit);
 
 // =============================================================================
 // Scope Management

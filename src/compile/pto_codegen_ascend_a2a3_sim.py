@@ -936,8 +936,11 @@ class AscendA2A3SimCodeGenerator:
         """Generate orchestration function code."""
         lines = []
         
-        # Extract parameters
+        # Extract parameters (excludes intermediate buffers - they're not passed in)
         params = self._extract_params(program)
+        
+        # Get intermediate buffers for Mode B dynamic allocation
+        intermediate_buffers = getattr(program, 'intermediate_buffers', {})
         
         lines.append(f"// =============================================================================")
         lines.append(f"// Orchestration Function: {program.name}")
@@ -947,6 +950,11 @@ class AscendA2A3SimCodeGenerator:
         lines.append(f"// Parameters passed via void** array:")
         for i, (c_type, name) in enumerate(params):
             lines.append(f"//   [{i}] {name} ({c_type})")
+        if intermediate_buffers:
+            lines.append(f"//")
+            lines.append(f"// Intermediate buffers (Mode B - runtime allocated):")
+            for buf_name, buf_info in intermediate_buffers.items():
+                lines.append(f"//   {buf_name}: {buf_info.size} bytes (allocated by runtime)")
         lines.append(f"// =============================================================================")
         lines.append("")
         
@@ -966,6 +974,16 @@ class AscendA2A3SimCodeGenerator:
                 # Scalar type - dereference
                 lines.append(f"    {c_type} {name} = *({c_type}*)params[{i}];")
         lines.append("")
+        
+        # Declare intermediate buffers for Mode B dynamic allocation
+        # These are NOT passed as parameters - they're local variables that receive
+        # runtime-allocated addresses during task submission
+        if intermediate_buffers:
+            lines.append("    // Intermediate buffers (Mode B: runtime-allocated)")
+            lines.append("    // These variables receive allocated addresses from runtime during task submission")
+            for buf_name, buf_info in intermediate_buffers.items():
+                lines.append(f"    void* {buf_name} = NULL;  // Size: {buf_info.size} bytes")
+            lines.append("")
 
         lines.append("    // Root scope for buffer lifetime management")
         lines.append("    pto_scope_begin(rt);")
@@ -1036,6 +1054,9 @@ class AscendA2A3SimCodeGenerator:
                             rows = arg_info[3] if len(arg_info) > 3 else 32
                             cols = arg_info[4] if len(arg_info) > 4 else 128
                             
+                            # Check if this tensor is an intermediate buffer (Mode B)
+                            is_intermediate = tensor in intermediate_buffers
+                            
                             # Determine if this is input, output, or both based on callee analysis
                             is_input = arg_name in callee_inputs or (not callee_inputs and not callee_outputs)
                             is_output = arg_name in callee_outputs
@@ -1047,9 +1068,21 @@ class AscendA2A3SimCodeGenerator:
                             
                             # Add both input and output if memref is read and written
                             if is_input:
-                                lines.append(f"{indent}    pto_task_add_input(rt, t, {tensor}, {row_idx}, {col_idx}, {rows}, {cols});")
+                                # For intermediate buffers, use zero offsets to match Mode B output registration
+                                if is_intermediate:
+                                    lines.append(f"{indent}    pto_task_add_input(rt, t, {tensor}, 0, 0, {rows}, {cols});")
+                                else:
+                                    lines.append(f"{indent}    pto_task_add_input(rt, t, {tensor}, {row_idx}, {col_idx}, {rows}, {cols});")
+                            
                             if is_output:
-                                lines.append(f"{indent}    pto_task_add_output(rt, t, {tensor}, {row_idx}, {col_idx}, {rows}, {cols});")
+                                if is_intermediate:
+                                    # Mode B: Use &tensor (pointer-to-pointer) for runtime allocation writeback
+                                    # Runtime will allocate a fresh buffer and write address back to tensor variable
+                                    # NOTE: Mode B requires zero offsets because each allocation is independent
+                                    lines.append(f"{indent}    pto_task_add_output_ref(rt, t, &{tensor}, 0, 0, {rows}, {cols});")
+                                else:
+                                    # Mode A: Direct buffer pointer (pre-allocated)
+                                    lines.append(f"{indent}    pto_task_add_output(rt, t, {tensor}, {row_idx}, {col_idx}, {rows}, {cols});")
                 
                 # Set cycle cost (can use core simulator or heuristic)
                 lines.append(f"{indent}    // Cycle cost: {cycle_cost} (heuristic), use core sim for accurate timing")

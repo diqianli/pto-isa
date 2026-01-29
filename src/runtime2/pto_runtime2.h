@@ -52,7 +52,7 @@ typedef enum {
  * Contains all state for orchestration and scheduling.
  * In simulated mode, runs in single process with shared address space.
  */
-typedef struct {
+typedef struct PTO2Runtime {
     // Components
     PTO2SharedMemoryHandle* sm_handle;
     PTO2OrchestratorState   orchestrator;
@@ -240,26 +240,32 @@ int pto2_runtime_dump_graph(PTO2Runtime* rt, const char* filename);
 bool pto2_runtime_validate(PTO2Runtime* rt);
 
 // =============================================================================
-// Convenience Macros
+// Convenience Macros (if not already defined in pto_runtime2_types.h)
 // =============================================================================
 
+#ifndef PTO2_INPUT
 /**
  * Create input parameter
  */
 #define PTO2_INPUT(buf, tile, sz) \
     ((PTO2TaskParam){.type = PTO2_PARAM_INPUT, .buffer = (buf), .tile_index = (tile), .size = (sz)})
+#endif
 
+#ifndef PTO2_OUTPUT
 /**
  * Create output parameter
  */
 #define PTO2_OUTPUT(buf, tile, sz) \
     ((PTO2TaskParam){.type = PTO2_PARAM_OUTPUT, .buffer = (buf), .tile_index = (tile), .size = (sz)})
+#endif
 
+#ifndef PTO2_INOUT
 /**
  * Create in-out parameter
  */
 #define PTO2_INOUT(buf, tile, sz) \
     ((PTO2TaskParam){.type = PTO2_PARAM_INOUT, .buffer = (buf), .tile_index = (tile), .size = (sz)})
+#endif
 
 /**
  * Scope helper macros

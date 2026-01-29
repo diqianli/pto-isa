@@ -10,11 +10,22 @@
  * 2. Lazy invalidation (entries become stale when producer retires)
  * 3. Chain truncation optimization (truncate on first stale entry)
  * 4. Per-task entry tracking for efficient cleanup
+ * 5. OVERLAP DETECTION: Detects dependencies for overlapping sub-regions
  * 
  * Hash table with chaining:
  * - buckets[] array of head offsets
  * - Entries linked via next_in_bucket
  * - Insert at head (newest first) for sorted chains
+ * 
+ * CRITICAL: Hash only by base_ptr
+ * ==============================
+ * For overlap detection to work, ALL sub-regions of the same base tensor
+ * MUST be in the SAME hash bucket. This allows lookup to compare all
+ * potentially overlapping regions.
+ * 
+ * Overlap detection: Two regions create a dependency if:
+ *   1. Same base_ptr (raw tensor pointer)
+ *   2. Byte ranges [offset, offset+size) intersect
  * 
  * Based on: docs/runtime_buffer_manager_methods.md
  */
@@ -149,7 +160,17 @@ static inline bool pto2_tensormap_entry_valid(PTO2TensorMap* tm, PTO2TensorMapEn
 }
 
 /**
- * Check if two regions match
+ * Check if two regions OVERLAP (for dependency detection)
+ * 
+ * Returns true if regions have same base_ptr AND their byte ranges
+ * [offset, offset+size) intersect.
+ * 
+ * Overlap condition: (a.start < b.end) AND (b.start < a.end)
+ */
+bool pto2_region_overlap(PTO2TensorRegion* a, PTO2TensorRegion* b);
+
+/**
+ * Check if two regions match exactly (legacy, for compatibility)
  */
 bool pto2_region_match(PTO2TensorRegion* a, PTO2TensorRegion* b);
 

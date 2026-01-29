@@ -8,6 +8,7 @@ AR = ar
 CFLAGS = -Wall -Wextra -O3 -fPIC -std=c11
 DEBUG_FLAGS = -g -DDEBUG -O0
 INCLUDES = -I. -I./runtime_a2a3_sim/core_model
+LDFLAGS = -lpthread
 
 # Source files
 SRCS = \
@@ -17,7 +18,9 @@ SRCS = \
 	pto_scheduler.c \
 	pto_orchestrator.c \
 	pto_runtime2.c \
-	pto_runtime2_sim.c
+	pto_runtime2_sim.c \
+	pto_worker.c \
+	pto_runtime2_threaded.c
 
 OBJS = $(SRCS:.c=.o)
 
@@ -30,7 +33,9 @@ HEADERS = \
 	pto_scheduler.h \
 	pto_orchestrator.h \
 	pto_runtime2.h \
-	pto_runtime2_sim.h
+	pto_runtime2_sim.h \
+	pto_worker.h \
+	pto_runtime2_threaded.h
 
 # Output library
 LIB_NAME = libpto_runtime2
@@ -84,7 +89,7 @@ test: lib
 	@echo "Running tests..."
 	@if [ -f $(TEST_DIR)/test_runtime2.c ]; then \
 		$(CC) $(CFLAGS) $(INCLUDES) -o $(TEST_DIR)/test_runtime2 \
-			$(TEST_DIR)/test_runtime2.c -L. -lpto_runtime2 && \
+			$(TEST_DIR)/test_runtime2.c -L. -lpto_runtime2 $(LDFLAGS) && \
 		./$(TEST_DIR)/test_runtime2; \
 	else \
 		echo "No tests found. Creating example test..."; \
@@ -110,10 +115,35 @@ $(TEST_DIR)/test_runtime2.c:
 	@echo '    return 0;' >> $@
 	@echo '}' >> $@
 
+# BGEMM test (single-threaded)
+bgemm: lib
+	@echo "Building BGEMM test..."
+	$(CC) $(CFLAGS) $(INCLUDES) -o $(TEST_DIR)/test_bgemm_runtime2 \
+		$(TEST_DIR)/test_bgemm_runtime2.c -L. -lpto_runtime2 $(LDFLAGS)
+	@echo "Running BGEMM test (single-threaded)..."
+	@cd $(TEST_DIR) && ./test_bgemm_runtime2
+
+# BGEMM test (multi-threaded)
+bgemm-mt: lib
+	@echo "Building BGEMM test..."
+	$(CC) $(CFLAGS) $(INCLUDES) -o $(TEST_DIR)/test_bgemm_runtime2 \
+		$(TEST_DIR)/test_bgemm_runtime2.c -L. -lpto_runtime2 $(LDFLAGS)
+	@echo "Running BGEMM test (multi-threaded)..."
+	@cd $(TEST_DIR) && ./test_bgemm_runtime2 4 4 4 4 1
+
+# BGEMM large test (multi-threaded, tests flow control)
+bgemm-large: lib
+	@echo "Building BGEMM test..."
+	$(CC) $(CFLAGS) $(INCLUDES) -o $(TEST_DIR)/test_bgemm_runtime2 \
+		$(TEST_DIR)/test_bgemm_runtime2.c -L. -lpto_runtime2 $(LDFLAGS)
+	@echo "Running large BGEMM test (multi-threaded)..."
+	@cd $(TEST_DIR) && ./test_bgemm_runtime2 16 8 8 8 1
+
 # Clean
 clean:
 	rm -f $(OBJS) $(STATIC_LIB) $(SHARED_LIB)
-	rm -f $(TEST_DIR)/test_runtime2
+	rm -f $(TEST_DIR)/test_runtime2 $(TEST_DIR)/test_bgemm_runtime2
+	rm -f $(TEST_DIR)/*.json
 
 clean-all: clean
 	$(MAKE) -C $(CORE_MODEL_DIR) clean
@@ -140,6 +170,9 @@ help:
 	@echo "  debug      - Build with debug symbols"
 	@echo "  core_model - Build with A2A3 core model integration"
 	@echo "  test       - Build and run tests"
+	@echo "  bgemm      - Build and run BGEMM test (single-threaded)"
+	@echo "  bgemm-mt   - Build and run BGEMM test (multi-threaded)"
+	@echo "  bgemm-large- Build and run large BGEMM test (multi-threaded)"
 	@echo "  clean      - Remove build artifacts"
 	@echo "  clean-all  - Remove all artifacts including core model"
 	@echo "  install    - Install to PREFIX (default: /usr/local)"
@@ -149,3 +182,7 @@ help:
 	@echo "  CC         - C compiler (default: gcc)"
 	@echo "  CFLAGS     - Additional compiler flags"
 	@echo "  PREFIX     - Installation prefix (default: /usr/local)"
+	@echo ""
+	@echo "BGEMM Test Usage:"
+	@echo "  ./tests/test_bgemm_runtime2 [batch] [m] [n] [k] [mode]"
+	@echo "    mode: 0 = single-threaded, 1 = multi-threaded"

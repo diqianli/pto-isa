@@ -46,10 +46,10 @@
 #define PTO_TASK_SLOT(task_id) ((task_id) & (PTO_TASK_WINDOW_SIZE - 1))  // Fast modulo (window must be power of 2)
 
 #define PTO_MAX_ARGS           16      // Maximum arguments per task
-#define PTO_TENSORMAP_SIZE     PTO_TASK_WINDOW_SIZE       // Hash bucket count (power of 2)
-#define PTO_TENSORMAP_POOL_SIZE (PTO_TASK_WINDOW_SIZE * 4) // Ring pool entries (headroom for multiple outputs)
+#define PTO_TENSORMAP_SIZE     PTO_TASK_WINDOW_SIZE        // Hash bucket count (power of 2)
+#define PTO_TENSORMAP_POOL_SIZE (PTO_TASK_WINDOW_SIZE * 32) // Ring pool entries (large for orchestration-only mode)
 #define PTO_DEP_LIST_POOL_SIZE (PTO_TASK_WINDOW_SIZE * 16) // Dep list nodes (fanin+fanout headroom)
-#define PTO_HEAP_SIZE_BYTES    (64 * 1024 * 1024)          // Packed output heap (host/sim default)
+#define PTO_HEAP_SIZE_BYTES    (1024 * 1024 * 1024)       // Packed output heap (1GB for large orchestration-only)
 #define PTO_MAX_READY_QUEUE    65536   // Ready queue size (64K, 2x window for safety)
 #define PTO_MAX_WORKERS        128     // Maximum worker threads (A2A3: 48 vector + 24 cube = 72)
 
@@ -69,6 +69,55 @@
 // =============================================================================
 
 struct PTORuntime;
+
+// =============================================================================
+// Flow Control: Stall Reasons and Statistics
+// =============================================================================
+
+/**
+ * Ring buffer stall reasons for flow control diagnostics
+ * When orchestration is blocked waiting for scheduler to free space,
+ * the stall reason indicates which resource is exhausted.
+ */
+typedef enum {
+    PTO_STALL_NONE = 0,           // No stall
+    PTO_STALL_TASK_RING,          // Task window full (waiting for tasks to be CONSUMED)
+    PTO_STALL_TENSORMAP_POOL,     // TensorMap pool full (waiting for entries to be freed)
+    PTO_STALL_DEPLIST_POOL,       // DepList pool full (waiting for entries to be freed)
+    PTO_STALL_HEAP_RING,          // Heap full (waiting for buffers to be reclaimed)
+    PTO_STALL_READY_QUEUE,        // Ready queue full (waiting for tasks to be dispatched)
+    PTO_STALL_COUNT               // Number of stall types (for array sizing)
+} PTOStallReason;
+
+/**
+ * Flow control statistics for performance tuning
+ * Records how many times orchestration was blocked on each resource
+ */
+typedef struct {
+    // Stall counts per resource
+    int64_t task_ring_stalls;         // Times blocked on task window full
+    int64_t tensormap_pool_stalls;    // Times blocked on TensorMap pool full
+    int64_t deplist_pool_stalls;      // Times blocked on DepList pool full
+    int64_t heap_ring_stalls;         // Times blocked on heap full
+    int64_t ready_queue_stalls;       // Times blocked on ready queue full
+    
+    // Total stall time (nanoseconds) per resource
+    int64_t task_ring_stall_ns;
+    int64_t tensormap_pool_stall_ns;
+    int64_t deplist_pool_stall_ns;
+    int64_t heap_ring_stall_ns;
+    int64_t ready_queue_stall_ns;
+    
+    // High water marks (maximum usage observed)
+    int32_t task_ring_hwm;            // Max tasks in flight
+    int32_t tensormap_pool_hwm;       // Max TensorMap entries used
+    int32_t deplist_pool_hwm;         // Max DepList entries used  
+    int32_t heap_hwm;                 // Max heap bytes allocated
+    int32_t ready_queue_hwm;          // Max ready queue size
+    
+    // Current stall state (for debugging)
+    volatile PTOStallReason current_stall;
+} PTOFlowControlStats;
 
 // =============================================================================
 // Core Data Structures (Platform Independent)
@@ -92,6 +141,7 @@ typedef struct {
 typedef struct {
     TensorRegion region;     // Tensor region
     bool         is_output;  // True if this is an output argument
+    void**       tensor_ref; // Mode B: Reference to write allocated address back (NULL for Mode A)
 } TaskArg;
 
 // =============================================================================
@@ -275,6 +325,9 @@ typedef struct PTORuntime {
     int64_t      total_tasks_scheduled;
     int64_t      total_tasks_completed;
     
+    // Flow control statistics for performance tuning
+    PTOFlowControlStats flow_stats;
+    
     // =========================================================================
     // Platform-Specific: Ready Queues
     // =========================================================================
@@ -306,7 +359,13 @@ typedef struct PTORuntime {
     pthread_cond_t    all_done;              // Signaled when all tasks complete
     pthread_cond_t    vector_queue_not_empty;// For A2A3 vector queue
     pthread_cond_t    cube_queue_not_empty;  // For A2A3 cube queue
-    pthread_cond_t    window_not_full;       // Signaled when window has space
+    
+    // Flow control condition variables (signaled when space becomes available)
+    pthread_cond_t    window_not_full;       // Signaled when task window has space
+    pthread_cond_t    tensormap_not_full;    // Signaled when TensorMap pool has space
+    pthread_cond_t    deplist_not_full;      // Signaled when DepList pool has space
+    pthread_cond_t    heap_not_full;         // Signaled when heap has space
+    pthread_cond_t    ready_queue_not_full;  // Signaled when ready queue has space
     
     // Worker threads
     pthread_t         workers[PTO_MAX_WORKERS];
@@ -459,12 +518,30 @@ void pto_task_add_input(PTORuntime* rt, int32_t task_id,
                         int64_t rows, int64_t cols);
 
 /**
- * Add an output argument to a task
+ * Add an output argument to a task (Mode A: pre-allocated buffer)
  * Output regions are registered in TensorMap on task submit.
  */
 void pto_task_add_output(PTORuntime* rt, int32_t task_id,
                          void* tensor, int64_t row_off, int64_t col_off,
                          int64_t rows, int64_t cols);
+
+/**
+ * Add an output argument with reference for runtime allocation (Mode B)
+ * 
+ * This is for Mode B dynamic allocation where:
+ * - tensor_ref is a pointer-to-pointer (void**)
+ * - Runtime allocates buffer from HeapRing during task submission
+ * - Allocated address is written back to *tensor_ref
+ * 
+ * Usage:
+ *   void* P = NULL;
+ *   pto_task_add_output_ref(rt, t, &P, row, col, rows, cols);
+ *   pto_task_submit(rt, t);
+ *   // P now contains the runtime-allocated address
+ */
+void pto_task_add_output_ref(PTORuntime* rt, int32_t task_id,
+                             void** tensor_ref, int64_t row_off, int64_t col_off,
+                             int64_t rows, int64_t cols);
 
 /**
  * Finalize a task for submission:
@@ -590,6 +667,36 @@ int pto_runtime_dump(PTORuntime* rt, const char* filename);
  * Dump runtime state to stdout (condensed format)
  */
 int pto_runtime_dump_stdout(PTORuntime* rt);
+
+// =============================================================================
+// Platform-Independent API: Flow Control Statistics
+// =============================================================================
+
+/**
+ * Get flow control statistics
+ */
+const PTOFlowControlStats* pto_get_flow_stats(PTORuntime* rt);
+
+/**
+ * Reset flow control statistics
+ */
+void pto_reset_flow_stats(PTORuntime* rt);
+
+/**
+ * Print flow control statistics (for performance tuning)
+ * Shows stall counts, stall times, and high water marks for each resource
+ */
+void pto_print_flow_stats(PTORuntime* rt);
+
+/**
+ * Get stall reason name as string
+ */
+const char* pto_stall_reason_name(PTOStallReason reason);
+
+/**
+ * Check if any resource is currently stalled
+ */
+PTOStallReason pto_get_current_stall(PTORuntime* rt);
 
 // =============================================================================
 // Platform-Dependent API (to be implemented by platform-specific files)

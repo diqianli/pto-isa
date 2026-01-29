@@ -48,7 +48,7 @@ typedef struct {
  * Contains dynamic state updated during task execution.
  * Separated from shared memory for cache efficiency.
  */
-typedef struct {
+typedef struct PTO2SchedulerState {
     // Shared memory access
     PTO2SharedMemoryHandle* sm_handle;
     
@@ -153,6 +153,57 @@ static inline bool pto2_ready_queue_full(PTO2ReadyQueue* queue) {
 static inline int32_t pto2_ready_queue_count(PTO2ReadyQueue* queue) {
     return queue->count;
 }
+
+// =============================================================================
+// Thread-Safe Ready Queue Operations
+// =============================================================================
+
+/**
+ * Push task to ready queue with thread synchronization
+ * Uses external mutex/cond from PTO2ThreadContext
+ * 
+ * @param queue       Ready queue
+ * @param task_id     Task ID to push
+ * @param mutex       External mutex protecting this queue
+ * @param cond        Condition variable to signal workers
+ * @return true if successful, false if queue is full
+ */
+bool pto2_ready_queue_push_threadsafe(PTO2ReadyQueue* queue, int32_t task_id,
+                                       pthread_mutex_t* mutex, pthread_cond_t* cond);
+
+/**
+ * Pop task from ready queue with thread synchronization
+ * Blocks if queue is empty until task available or shutdown
+ * 
+ * @param queue       Ready queue
+ * @param mutex       External mutex protecting this queue
+ * @param cond        Condition variable to wait on
+ * @param shutdown    Pointer to shutdown flag
+ * @return task_id, or -1 if shutdown requested
+ */
+int32_t pto2_ready_queue_pop_threadsafe(PTO2ReadyQueue* queue,
+                                         pthread_mutex_t* mutex, pthread_cond_t* cond,
+                                         volatile bool* shutdown);
+
+/**
+ * Try to pop task from ready queue without blocking
+ * 
+ * @param queue       Ready queue
+ * @param mutex       External mutex protecting this queue
+ * @return task_id, or -1 if queue is empty
+ */
+int32_t pto2_ready_queue_try_pop_threadsafe(PTO2ReadyQueue* queue,
+                                             pthread_mutex_t* mutex);
+
+/**
+ * Get ready queue count (thread-safe)
+ */
+int32_t pto2_ready_queue_count_threadsafe(PTO2ReadyQueue* queue, pthread_mutex_t* mutex);
+
+/**
+ * Check if ready queue is empty (thread-safe)
+ */
+bool pto2_ready_queue_empty_threadsafe(PTO2ReadyQueue* queue, pthread_mutex_t* mutex);
 
 // =============================================================================
 // Task State Management
@@ -278,6 +329,48 @@ bool pto2_scheduler_is_done(PTO2SchedulerState* sched);
  * @return Number of new tasks processed
  */
 int32_t pto2_scheduler_process_new_tasks(PTO2SchedulerState* sched);
+
+// =============================================================================
+// Scheduler Thread Interface
+// =============================================================================
+
+/**
+ * Scheduler thread main function
+ * 
+ * This is the entry point for the scheduler thread. It:
+ * 1. Polls for new tasks from orchestrator
+ * 2. Processes task completions from workers
+ * 3. Updates dependency refcounts and enqueues ready tasks
+ * 4. Advances ring pointers for flow control
+ * 
+ * @param arg Pointer to PTO2SchedulerContext
+ * @return NULL
+ */
+void* pto2_scheduler_thread_func(void* arg);
+
+/**
+ * Process completions from workers
+ * 
+ * Reads completion queue and calls on_task_complete for each.
+ * Updates refcounts and enqueues newly ready tasks.
+ * 
+ * @param ctx Scheduler context (includes thread context)
+ * @return Number of completions processed
+ */
+int32_t pto2_scheduler_process_completions(PTO2SchedulerContext* ctx);
+
+/**
+ * Enqueue task to ready queue with thread-safe signaling
+ * 
+ * @param sched       Scheduler state
+ * @param task_id     Task ID
+ * @param worker_type Worker type
+ * @param thread_ctx  Thread context for synchronization
+ */
+void pto2_scheduler_enqueue_ready_threadsafe(PTO2SchedulerState* sched,
+                                              int32_t task_id,
+                                              PTO2WorkerType worker_type,
+                                              PTO2ThreadContext* thread_ctx);
 
 // =============================================================================
 // Debug Utilities

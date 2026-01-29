@@ -129,20 +129,70 @@ void pto2_tensormap_reset(PTO2TensorMap* tm) {
 // =============================================================================
 
 uint32_t pto2_tensormap_hash(PTO2TensorMap* tm, PTO2TensorRegion* region) {
-    // Combine base_ptr, tile_index, and offset for good distribution
-    uint64_t key = (uint64_t)(uintptr_t)region->base_ptr ^ 
-                   ((uint64_t)region->tile_index << 16) ^
-                   ((uint64_t)region->offset << 32);
+    // ========================================================================
+    // CRITICAL: Hash ONLY by base_ptr for correct overlap detection!
+    // ========================================================================
+    // 
+    // For overlap detection to work, ALL regions accessing the same base
+    // tensor MUST be in the SAME hash bucket. This allows lookup to find
+    // and check all potentially overlapping regions.
+    //
+    // If we included offset in the hash, overlapping regions with different
+    // offsets would end up in different buckets and never be compared:
+    //   Region A: base=X, offset=0   → bucket 5
+    //   Region B: base=X, offset=128 → bucket 12  (WRONG! Can't detect overlap)
+    //
+    // With base_ptr-only hash:
+    //   Region A: base=X, offset=0   → bucket 5
+    //   Region B: base=X, offset=128 → bucket 5   (CORRECT! Same bucket)
+    //
+    uint64_t key = (uint64_t)(uintptr_t)region->base_ptr;
+    
+    // Improve distribution by mixing bits (pointers often have aligned low bits)
+    key = key ^ (key >> 16);
+    key = key ^ (key >> 32);
     
     // Use bitwise AND for power-of-2 modulo (faster than %)
     return (uint32_t)(key & (tm->num_buckets - 1));
 }
 
+// Check if two regions OVERLAP (not just exact match)
+// 
+// Overlap condition:
+//   1. Same base_ptr (raw tensor pointer)
+//   2. Same tile_index (different tiles are disjoint memory regions)
+//   3. Byte ranges [offset, offset+size) intersect within the tile
+//
+// Note: tile_index represents a tile/block subdivision of the tensor.
+// Different tile indices are treated as non-overlapping memory regions,
+// even if their offsets are the same (offset is relative to tile start).
+//
+bool pto2_region_overlap(PTO2TensorRegion* a, PTO2TensorRegion* b) {
+    // Must be same base tensor
+    if (a->base_ptr != b->base_ptr) {
+        return false;
+    }
+    
+    // Must be same tile (different tiles don't overlap)
+    if (a->tile_index != b->tile_index) {
+        return false;
+    }
+    
+    // Check 1D interval overlap within tile: [start_a, end_a) ∩ [start_b, end_b) ≠ ∅
+    int32_t a_start = a->offset;
+    int32_t a_end = a_start + a->size;
+    int32_t b_start = b->offset;
+    int32_t b_end = b_start + b->size;
+    
+    // Overlap exists if: (a_start < b_end) AND (b_start < a_end)
+    return (a_start < b_end) && (b_start < a_end);
+}
+
+// Legacy exact match (kept for compatibility, not used in lookup)
 bool pto2_region_match(PTO2TensorRegion* a, PTO2TensorRegion* b) {
     return a->base_ptr == b->base_ptr &&
            a->tile_index == b->tile_index &&
            a->offset == b->offset;
-    // Note: size is not compared - same region can have different sizes
 }
 
 // =============================================================================
@@ -229,9 +279,11 @@ int32_t pto2_tensormap_lookup(PTO2TensorMap* tm, PTO2TensorRegion* region) {
             return -1;  // Not found (and cleaned up stale tail)
         }
         
-        // Entry is valid - check if region matches
-        if (pto2_region_match(&entry->region, region)) {
-            return entry->producer_task_id;  // FOUND
+        // Entry is valid - check if regions OVERLAP (not just exact match)
+        // Since we hash only by base_ptr, all entries in this bucket have
+        // potential to overlap. We must check actual byte-range overlap.
+        if (pto2_region_overlap(&entry->region, region)) {
+            return entry->producer_task_id;  // FOUND (overlapping region)
         }
         
         // Move to next entry
