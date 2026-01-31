@@ -1878,26 +1878,25 @@ This section describes how tensor extraction operations affect memory layout and
 │                                                                              │
 │   DESIGN DECISION:                                                           │
 │   ═════════════════                                                          │
-│   HYBRID APPROACH (Implemented in runtime2):                                 │
+│   BOUNDING BOX APPROACH (Implemented in runtime2):                           │
 │                                                                              │
 │   1. Simple Tensor (is_contiguous = true):                                   │
-│      → Use Bounding Box only (O(1), exact for contiguous tensors)           │
+│      → Bounding Box is EXACT (no false positives)                           │
 │                                                                              │
 │   2. Complex Tensor (is_contiguous = false):                                 │
-│      → Use Bounding Box for quick rejection                                  │
-│      → 1D: Use exact GCD with range validation                              │
-│      → Multi-D: Use Combined Lattice GCD method                             │
-│        (computes gcd of all strides, checks offset divisibility)            │
+│      → Bounding Box is CONSERVATIVE (safe, may have false positives)        │
+│                                                                              │
+│   NOTE: GCD-based methods are DISABLED because:                              │
+│   • They don't work when lowest dimension has stride=1 (GCD becomes 1)      │
+│   • They can produce false negatives in certain cases                       │
+│   • Bounding box is safe (no false negatives, correctness guaranteed)       │
 │                                                                              │
 │   This provides:                                                             │
-│   • O(1) fast path for the common case (contiguous tensors)                 │
-│   • O(ndim) for multi-dimensional non-contiguous tensors                    │
-│   • Eliminates most false positives from bounding box                       │
-│   • Automatic method selection based on tensor complexity                    │
+│   • O(ndim) complexity for all cases                                        │
+│   • NO FALSE NEGATIVES (never misses a real overlap)                        │
+│   • May have false positives for non-contiguous tensors (safe)              │
 │                                                                              │
-│   APIs:                                                                      │
-│   • pto2_logical_tensor_overlap_hybrid()  - recommended                     │
-│   • pto2_logical_tensor_overlap_exact()   - multi-dim GCD support           │
+│   API: pto2_logical_tensor_overlap_hybrid()                                 │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1992,28 +1991,16 @@ bool pto2_logical_tensor_overlap_fast(
     const PTO2LogicalTensor* b
 );
 
-// Exact GCD-based check for 1D tensors (no false positives)
-bool pto2_overlap_1d_exact(
-    int64_t offset_a, int64_t stride_a, int64_t size_a,
-    int64_t offset_b, int64_t stride_b, int64_t size_b
-);
-
-// Exact check for logical tensors (uses GCD for 1D, fallback for multi-dim)
-bool pto2_logical_tensor_overlap_exact(
-    const PTO2LogicalTensor* a,
-    const PTO2LogicalTensor* b
-);
-
-// === HYBRID OVERLAP DETECTION (RECOMMENDED) ===
-// Combines fast and exact methods automatically:
-// - Simple tensors (contiguous): O(1) bounding box, 100% accurate
-// - Complex tensors (non-contiguous): bounding box filter + GCD verification
+// === OVERLAP DETECTION (RECOMMENDED) ===
+// Uses bounding box for all cases:
+// - Contiguous tensors: bounding box is exact (no false positives)
+// - Non-contiguous tensors: bounding box is conservative (safe, may have false positives)
 bool pto2_logical_tensor_overlap_hybrid(
     const PTO2LogicalTensor* a,
     const PTO2LogicalTensor* b
 );
 
-// Hybrid detection for tensor vs TensorMapEntry
+// Overlap detection for tensor vs TensorMapEntry
 bool pto2_tensor_entry_overlap_hybrid(
     const PTO2LogicalTensor* tensor,
     const PTO2TensorMapEntryEx* entry
@@ -2026,55 +2013,18 @@ int32_t pto2_interval_tree_query(tree, low, high, results, max_results);
 int32_t pto2_interval_tree_remove_stale(tree, task_threshold);
 ```
 
-**GCD-Based Exact Overlap Detection:**
+**Note on GCD-Based Methods:**
 
-The GCD algorithm solves the Diophantine equation to determine if two strided sequences share any common elements:
+GCD-based overlap detection was considered but is currently DISABLED because:
 
-```
-Tensor A touches offsets: offset_a + i * stride_a  (0 <= i < size_a)
-Tensor B touches offsets: offset_b + j * stride_b  (0 <= j < size_b)
+1. **stride=1 problem**: When the lowest dimension has stride equal to elem_size,
+   the GCD of all strides becomes small (often 1), making the test ineffective.
 
-Overlap exists iff: offset_a + i*stride_a = offset_b + j*stride_b
-Rearranged: i*stride_a - j*stride_b = offset_b - offset_a = delta
+2. **False negative risk**: When one tensor is contiguous and the other is 
+   non-contiguous, GCD methods can incorrectly report "no overlap".
 
-Solution exists iff: gcd(stride_a, stride_b) divides delta
-```
-
-Example demonstrating GCD advantage:
-
-```c
-// A: bytes [0, 8, 16, 24] (stride=8, size=4)
-// B: bytes [4, 12, 20, 28] (stride=8, size=4, offset=4)
-// These INTERLEAVE - no actual overlap!
-
-// Bounding box: A=[0,24], B=[4,28] -> OVERLAP (false positive!)
-bool fast = pto2_logical_tensor_overlap_fast(&A, &B);  // true (wrong!)
-
-// GCD: delta=4, gcd(8,8)=8, 4 % 8 != 0 -> NO OVERLAP
-bool exact = pto2_logical_tensor_overlap_exact(&A, &B);  // false (correct!)
-```
-
-**Multi-Dimensional GCD (Combined Lattice Method):**
-
-For multi-dimensional non-contiguous tensors, the algorithm computes the combined GCD of all strides:
-
-```c
-// For tensors A and B:
-// gcd_A = gcd(stride_A[0], stride_A[1], ..., stride_A[ndim-1])
-// gcd_B = gcd(stride_B[0], stride_B[1], ..., stride_B[ndim-1])
-// combined_gcd = gcd(gcd_A, gcd_B)
-//
-// If |offset_B - offset_A| % combined_gcd != 0 -> NO OVERLAP (exact)
-
-// Example: 2D tensors with interleaved access patterns
-// A: shape=[2,4], strides=[16,4], offset=0 -> accesses 0,4,8,12,16,20,24,28
-// B: shape=[2,4], strides=[16,4], offset=2 -> accesses 2,6,10,14,18,22,26,30
-//
-// gcd(16,4) = 4, combined_gcd = 4, delta = 2
-// 2 % 4 != 0 -> NO OVERLAP (correct!)
-```
-
-This eliminates many false positives from pure bounding box checks while maintaining O(ndim) complexity.
+3. **Safety priority**: Bounding box is guaranteed safe (no false negatives).
+   False positives only add extra dependencies, which is safe for correctness.
 
 **Interval Tree for O(log n + k) Queries:**
 

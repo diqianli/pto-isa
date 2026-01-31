@@ -581,131 +581,59 @@ void pto2_tensormapex_insert(...) {
 }
 ```
 
-### 12.7 GCD 方法详解
+### 12.7 重叠检测方法
 
-对于非连续 tensor，使用 GCD（最大公约数）算法精确检测重叠。
+当前使用 **Bounding Box** 方法进行重叠检测：
 
-#### 12.7.1 一维 GCD（精确）
+#### 检测策略
 
-**数学原理**：
-```
-Tensor A 访问的字节偏移: offset_A + i * stride_A  (0 <= i < size_A)
-Tensor B 访问的字节偏移: offset_B + j * stride_B  (0 <= j < size_B)
+| Tensor A | Tensor B | 检测方法 | 结果 |
+|----------|----------|----------|------|
+| 连续 | 连续 | Bounding Box | **精确** |
+| 连续 | 非连续 | Bounding Box | 保守（可能有误报） |
+| 非连续 | 非连续 | Bounding Box | 保守（可能有误报） |
 
-重叠存在当且仅当存在整数 i, j 满足:
-  offset_A + i * stride_A = offset_B + j * stride_B
+#### 为什么不使用 GCD 方法
 
-变形: i * stride_A - j * stride_B = offset_B - offset_A = delta
+GCD 方法在理论上可以消除误报，但存在以下限制：
 
-根据数论，整数解存在当且仅当: gcd(stride_A, stride_B) | delta
-```
+1. **stride=1 问题**：当最低维度的 stride 等于 elem_size（通常为 1-8 字节）时，
+   所有 stride 的 GCD 会变得很小，导致检测失效
 
-**示例：消除误报**
+2. **False Negative 风险**：当一个 tensor 连续、另一个非连续时，GCD 方法可能
+   错误地报告"不重叠"（实际上有重叠）
 
-```
-Tensor A: offset=0, stride=8, size=4  -> 访问 [0, 8, 16, 24]
-Tensor B: offset=4, stride=8, size=4  -> 访问 [4, 12, 20, 28]
+3. **复杂度与收益**：精确的多维 GCD 需要 O(ndim³) 复杂度，而 bounding box 只需 O(ndim)
 
-Bounding Box:
-  A: [0, 24]
-  B: [4, 28]
-  交集: [4, 24] 非空 -> 误报"重叠"
-
-GCD 检测:
-  delta = 4 - 0 = 4
-  gcd(8, 8) = 8
-  4 % 8 ≠ 0 -> 无整数解 -> 不重叠 ✓
-```
-
-#### 12.7.2 多维 GCD（Combined Lattice Method）
-
-对于多维非连续 tensor，使用 **Combined GCD** 方法：
-
-**数学原理**：
-```
-Tensor A 访问的字节偏移: offset_A + Σ(i_d * stride_A[d])
-Tensor B 访问的字节偏移: offset_B + Σ(j_d * stride_B[d])
-
-所有 A 访问的偏移构成一个格点集，间距 = gcd(所有 stride_A[d])
-所有 B 访问的偏移构成一个格点集，间距 = gcd(所有 stride_B[d])
-
-Combined GCD = gcd(gcd_A, gcd_B)
-
-如果 (offset_B - offset_A) 不能被 Combined GCD 整除，
-则 A 和 B 不可能访问同一字节 -> 不重叠（精确）
-```
-
-**算法实现**：
+#### 当前实现
 
 ```c
-static int64_t compute_stride_gcd(const PTO2LogicalTensor* t) {
-    int64_t g = 0;
-    for (int32_t d = 0; d < t->ndim; d++) {
-        if (t->strides[d] != 0) {
-            g = gcd(g, llabs(t->strides[d]));
-        }
-    }
-    return g;
-}
-
-static bool overlap_multidim_gcd(const PTO2LogicalTensor* a, 
-                                  const PTO2LogicalTensor* b) {
-    int64_t gcd_a = compute_stride_gcd(a);
-    int64_t gcd_b = compute_stride_gcd(b);
-    int64_t combined_gcd = gcd(gcd_a, gcd_b);
+bool pto2_logical_tensor_overlap_hybrid(a, b) {
+    // 1. 不同存储 -> 不重叠
+    if (a->raw_base != b->raw_base) return false;
     
-    if (combined_gcd == 0) {
-        // 都是标量
-        return a->storage_offset == b->storage_offset;
-    }
+    // 2. Bounding box 不相交 -> 不重叠
+    if (a->max < b->min || b->max < a->min) return false;
     
-    int64_t delta = llabs(b->storage_offset - a->storage_offset);
-    if (delta % combined_gcd != 0) {
-        return false;  // 格点不兼容 -> 不重叠
-    }
+    // 3. 两者都连续 -> bounding box 精确
+    if (a->is_contiguous && b->is_contiguous) return true;
     
-    return true;  // 格点兼容 + bounding box 重叠 -> 可能重叠
+    // 4. 至少一个非连续 -> 保守返回 true
+    return true;  // 可能有误报，但无漏报
 }
 ```
 
-**示例：2D 交错 tensor**
-
-```
-Tensor A: shape=[2,4], strides=[16,4], offset=0
-  访问: 0,4,8,12,16,20,24,28 (4 的倍数)
-
-Tensor B: shape=[2,4], strides=[16,4], offset=2
-  访问: 2,6,10,14,18,22,26,30 (偏移 2)
-
-Bounding Box:
-  A: [0, 31]
-  B: [2, 33]
-  交集非空 -> 误报"重叠"
-
-Multi-dim GCD:
-  gcd_A = gcd(16, 4) = 4
-  gcd_B = gcd(16, 4) = 4
-  combined_gcd = gcd(4, 4) = 4
-  delta = |2 - 0| = 2
-  2 % 4 ≠ 0 -> 不重叠 ✓
-```
-
-#### 12.7.3 复杂度对比
-
-| 方法 | 精确度 | 时间复杂度 |
-|------|--------|------------|
-| Bounding Box | 保守（有误报） | O(ndim) |
-| 1D GCD | 精确 | O(1) |
-| Multi-dim GCD | 较精确（少量误报） | O(ndim) |
-| Full Lattice | 精确 | O(ndim³) |
+**特性**：
+- ✓ 无漏报（False Negative）：不会错过真正的重叠
+- ⚠️ 可能误报（False Positive）：非连续 tensor 可能报告重叠但实际不重叠
+- 误报是**安全的**：只会创建额外的依赖，不会破坏正确性
 
 ### 12.8 实现状态
 
 | 功能 | 状态 |
 |------|------|
 | is_simple 字段 | ✓ 已添加到 TensorMapEntryEx |
-| hybrid 检测函数 | ✓ 已实现 |
+| hybrid 检测函数 | ✓ 已实现（使用 bounding box） |
 | TensorMap 集成 | ✓ lookup 使用 hybrid |
-| 1D GCD 检测 | ✓ 精确实现（带范围验证） |
-| 多维 GCD 检测 | ✓ Combined Lattice Method |
-| 测试覆盖 | ✓ test_hybrid_overlap.c (7 个测试用例) |
+| 连续 tensor 检测 | ✓ 精确 |
+| 非连续 tensor 检测 | ✓ 保守（无漏报） |
