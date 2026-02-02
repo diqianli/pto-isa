@@ -29,9 +29,6 @@ examples/*/output/
 core*_*.dump
 profile_*_log*.toml
 
-# Removed `kernels/` in favor of `examples/` flow.
-kernels/
-
 # Extracted `ptoas` binaries (generated from the per-platform tarballs).
 bin/*/ptoas
 
