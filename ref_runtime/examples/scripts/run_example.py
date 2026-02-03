@@ -9,20 +9,31 @@ with minimal configuration. Users only need to provide:
 
 Usage:
     python examples/scripts/run_example.py --kernels ./my_test/kernels --golden ./my_test/golden.py
-    python examples/scripts/run_example.py -k ./kernels -g ./golden.py --device 0 --platform a2a3sim
+    python examples/scripts/run_example.py -k ./kernels -g ./golden.py -r rt2 -p a2a3sim
+
+Runtime (-r) and platform (-p) are independent:
+  - -r rt2 | host_build_graph  : which runtime implementation (task graph / scheduler)
+  - -p a2a3 | a2a3sim          : hardware or simulation
 
 Examples:
-    # Run hardware example (requires Ascend device)
-    python examples/scripts/run_example.py -k examples/host_build_graph_example/kernels \
-                                      -g examples/host_build_graph_example/golden.py
+    # rt2 + simulation (easyexample)
+    python examples/scripts/run_example.py -k examples/easyexample/kernels \\
+        -g examples/easyexample/golden.py -r rt2 -p a2a3sim
 
-    # Run simulation example (no hardware required)
-    python examples/scripts/run_example.py -k examples/host_build_graph_sim_example/kernels \
-                                      -g examples/host_build_graph_sim_example/golden.py \
-                                      -p a2a3sim
+    # rt2 + host orchestration (default: graph built on host CPU)
+    python examples/scripts/run_example.py -k examples/easyexample/kernels \\
+        -g examples/easyexample/golden.py -r rt2 -p a2a3sim
+
+    # rt2 + device orchestration (orchestrator on AICPU thread 3)
+    python examples/scripts/run_example.py -k examples/easyexample/kernels \\
+        -g examples/easyexample/golden.py -r rt2 -p a2a3sim --orchestrator device_aicpu
+
+    # host_build_graph + simulation
+    python examples/scripts/run_example.py -k examples/easyexample/kernels \\
+        -g examples/easyexample/golden.py -r host_build_graph -p a2a3sim
 
     # Run with specific device
-    python examples/scripts/run_example.py -k ./kernels -g ./golden.py -d 0
+    python examples/scripts/run_example.py -k ./kernels -g ./golden.py -r rt2 -d 0 -p a2a3
 """
 
 import argparse
@@ -36,8 +47,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python examples/scripts/run_example.py --kernels ./my_test/kernels --golden ./my_test/golden.py
-    python examples/scripts/run_example.py -k ./kernels -g ./golden.py -d 0
+    python examples/scripts/run_example.py -k examples/easyexample/kernels -g examples/easyexample/golden.py -r rt2 -p a2a3sim
+    python examples/scripts/run_example.py -k ./kernels -g ./golden.py -r host_build_graph -p a2a3 -d 0
 
 Golden.py interface:
     def generate_inputs(params: dict) -> dict:
@@ -78,14 +89,28 @@ Golden.py interface:
     parser.add_argument(
         "-r", "--runtime",
         default="host_build_graph",
-        help="Runtime implementation name (default: host_build_graph)"
+        choices=["rt2", "host_build_graph"],
+        help="Runtime implementation: 'rt2' (runtime2 merge) or 'host_build_graph' (default: host_build_graph). Independent of -p."
     )
 
     parser.add_argument(
         "-p", "--platform",
         default="a2a3",
         choices=["a2a3", "a2a3sim"],
-        help="Platform name: 'a2a3' for hardware, 'a2a3sim' for simulation (default: a2a3)"
+        help="Platform: 'a2a3' for hardware, 'a2a3sim' for simulation (default: a2a3). Independent of -r."
+    )
+
+    parser.add_argument(
+        "-u", "--use-device-orchestration",
+        action="store_true",
+        help="(Deprecated) Equivalent to --orchestrator device_aicpu. Kept for backward compatibility."
+    )
+
+    parser.add_argument(
+        "--orchestrator",
+        choices=["host_cpu", "device_aicpu"],
+        default=None,
+        help="With -r rt2: run orchestrator on host CPU (host_cpu) or on AICPU thread 3 (device_aicpu). Default: host_cpu. Ignored for other runtimes."
     )
 
     parser.add_argument(
@@ -124,6 +149,11 @@ Golden.py interface:
         print(f"Error: kernel_config.py not found in {kernels_path}")
         return 1
 
+    # Orchestrator location for rt2: explicit --orchestrator or legacy -u
+    orchestrator = args.orchestrator
+    if orchestrator is None:
+        orchestrator = "device_aicpu" if getattr(args, "use_device_orchestration", False) else "host_cpu"
+
     # Import and run
     try:
         from code_runner import CodeRunner
@@ -134,6 +164,8 @@ Golden.py interface:
             runtime_name=args.runtime,
             device_id=args.device,
             platform=args.platform,
+            use_device_orchestration=getattr(args, "use_device_orchestration", False),
+            orchestrator_location=orchestrator,
         )
 
         runner.run()

@@ -195,15 +195,26 @@ int DeviceRunner::run(Runtime& runtime,
         runtime.workers[i].core_type = (i < num_aic) ? CoreType::AIC : CoreType::AIV;
     }
 
-    // Set function_bin_addr for all tasks
+    // Set function_bin_addr: PTO2 dispatch (SM) vs legacy in-Runtime task list
     std::cout << "\n=== Setting function_bin_addr for Tasks (Simulation) ===" << '\n';
-    for (int i = 0; i < runtime.get_task_count(); i++) {
-        Task* task = runtime.get_task(i);
-        if (task != nullptr) {
-            uint64_t addr = get_function_bin_addr(task->func_id);
-            task->function_bin_addr = addr;
-            std::cout << "  Task " << i << " (func_id=" << task->func_id
-                      << ") -> function_bin_addr=0x" << std::hex << addr << std::dec << '\n';
+    bool use_pto2 = (runtime.get_pto2_gm_sm_ptr() != nullptr);
+    if (use_pto2) {
+        runtime.set_use_pto2_dispatch(true);
+        for (const auto& kv : func_id_to_addr_) {
+            runtime.set_function_bin_addr(kv.first, kv.second.func_addr);
+            std::cout << "  func_id=" << kv.first << " -> function_bin_addr=0x" << std::hex
+                      << kv.second.func_addr << std::dec << '\n';
+        }
+        std::cout << "  (PTO2 dispatch, " << func_id_to_addr_.size() << " kernels)\n";
+    } else if (runtime.get_orch_built_on_host()) {
+        for (int i = 0; i < runtime.get_task_count(); i++) {
+            Task* task = runtime.get_task(i);
+            if (task != nullptr) {
+                uint64_t addr = get_function_bin_addr(task->func_id);
+                task->function_bin_addr = addr;
+                std::cout << "  Task " << i << " (func_id=" << task->func_id
+                          << ") -> function_bin_addr=0x" << std::hex << addr << std::dec << '\n';
+            }
         }
     }
     std::cout << '\n';

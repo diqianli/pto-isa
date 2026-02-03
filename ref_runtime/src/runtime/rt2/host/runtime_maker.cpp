@@ -14,6 +14,7 @@
  */
 
 #include "runtime.h"
+#include "../runtime/pto_shared_memory.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <cstddef>
@@ -56,7 +57,8 @@ extern "C" {
  * @param orch_func_name    Name of the orchestration function to call
  * @param func_args         Arguments for orchestration (host pointers, sizes, etc.)
  * @param func_args_count   Number of arguments
- * @param use_device_orchestration Ignored (host_build_graph always runs orch on host)
+ * @param use_device_orchestration If true, orchestration runs on AICPU thread 3; do not call orch on host
+ * @param run_orchestrator_on_host If true (rt2), orchestration runs on host CPU; caller allocates SM via allocate_pto2_shared_memory
  * @return 0 on success, -1 on failure
  */
 int init_runtime_impl(Runtime *runtime,
@@ -65,17 +67,35 @@ int init_runtime_impl(Runtime *runtime,
                     const char* orch_func_name,
                     uint64_t* func_args,
                     int func_args_count,
-                    int use_device_orchestration) {
-    (void)use_device_orchestration;
+                    int use_device_orchestration,
+                    int run_orchestrator_on_host) {
     // Validate inputs
     if (runtime == nullptr) {
         std::cerr << "Error: Runtime pointer is null\n";
         return -1;
     }
+    if (use_device_orchestration) {
+        // Device orchestration: do not load orch SO; thread 3 will call aicpu_orchestration_entry
+        runtime->set_orch_built_on_host(false);
+        runtime->set_orch_args(func_args, func_args_count);
+        runtime->set_pto2_gm_sm_ptr(nullptr);  // Stub handles null; full impl allocates GM buffer later
+        std::cout << "Device orchestration mode: orchestration will run on AICPU thread 3\n";
+        return 0;
+    }
+    if (run_orchestrator_on_host) {
+        // Host orchestration (rt2): do not load orch SO; host will call host_orchestration_entry after allocate_pto2_shared_memory
+        runtime->set_orch_built_on_host(true);  // so AICPU executor reads task count from SM and skips waiting for thread 3
+        runtime->set_orch_args(func_args, func_args_count);
+        std::cout << "Host orchestration mode: orchestration will run on host CPU; use allocate_pto2_shared_memory and run_host_orchestration\n";
+        return 0;
+    }
+
     if (orch_so_binary == nullptr || orch_so_size == 0 || orch_func_name == nullptr) {
         std::cerr << "Error: Invalid orchestration parameters\n";
         return -1;
     }
+
+    runtime->set_orch_built_on_host(true);
 
     // Load orchestration SO from binary data via temp file
     char fd_path[128];
@@ -164,9 +184,21 @@ int validate_runtime_impl(Runtime *runtime) {
     TensorPair* tensor_pairs = runtime->get_tensor_pairs();
     int tensor_pair_count = runtime->get_tensor_pair_count();
 
+    // PTO2 (device or host orchestration): graph output may be in packed buffer; copy from graph_output_ptr when set
+    void* pto2_sm = runtime->get_pto2_gm_sm_ptr();
+    PTO2SharedMemoryHeader* pto2_header = pto2_sm ? static_cast<PTO2SharedMemoryHeader*>(pto2_sm) : nullptr;
+    uint64_t graph_out_ptr = pto2_header ? pto2_header->graph_output_ptr : 0;
+    int32_t graph_out_size = pto2_header ? pto2_header->graph_output_size : 0;
+
     for (int i = 0; i < tensor_pair_count; i++) {
         const TensorPair& pair = tensor_pairs[i];
-        int copy_rc = runtime->host_api.copy_from_device(pair.host_ptr, pair.dev_ptr, pair.size);
+        void* src_ptr = pair.dev_ptr;
+        size_t copy_size = pair.size;
+        if (i == 0 && graph_out_ptr != 0 && graph_out_size > 0) {
+            src_ptr = reinterpret_cast<void*>(static_cast<uintptr_t>(graph_out_ptr));
+            copy_size = static_cast<size_t>(graph_out_size);
+        }
+        int copy_rc = runtime->host_api.copy_from_device(pair.host_ptr, src_ptr, copy_size);
         if (copy_rc != 0) {
             std::cerr << "Error: Failed to copy tensor " << i << " from device: " << copy_rc << '\n';
             rc = copy_rc;

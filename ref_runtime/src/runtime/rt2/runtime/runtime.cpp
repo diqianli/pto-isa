@@ -35,6 +35,17 @@ Runtime::Runtime() {
     block_dim = 0;
     sche_cpu_num = 1;
     tensor_pair_count = 0;
+    orch_built_on_host_ = true;
+    pto2_gm_sm_ptr_ = nullptr;
+    pto2_sm_size_ = 0;
+    pto2_gm_heap_ptr_ = nullptr;
+    pto2_gm_heap_size_ = 0;
+    orch_args_ = nullptr;
+    orch_arg_count_ = 0;
+    use_pto2_dispatch_ = false;
+    for (int i = 0; i < RUNTIME_MAX_FUNC_ID; i++) {
+        func_id_to_addr_[i] = 0;
+    }
 }
 
 // =============================================================================
@@ -213,6 +224,35 @@ void Runtime::clear_tensor_pairs() {
     tensor_pair_count = 0;
 }
 
-void Runtime::set_pto2_gm_sm_ptr(void* p) {
-    (void)p;  // No-op for host_build_graph
+// =============================================================================
+// Device orchestration
+// =============================================================================
+
+bool Runtime::get_orch_built_on_host() const { return orch_built_on_host_; }
+void* Runtime::get_pto2_gm_sm_ptr() const { return pto2_gm_sm_ptr_; }
+uint64_t* Runtime::get_orch_args() const { return orch_args_; }
+int Runtime::get_orch_arg_count() const { return orch_arg_count_; }
+void Runtime::set_orch_built_on_host(bool v) { orch_built_on_host_ = v; }
+void Runtime::set_pto2_gm_sm_ptr(void* p) { pto2_gm_sm_ptr_ = p; }
+void Runtime::set_orch_args(uint64_t* args, int count) {
+    orch_arg_count_ = count <= RUNTIME_MAX_ARGS ? count : RUNTIME_MAX_ARGS;
+    if (args && orch_arg_count_ > 0) {
+        memcpy(orch_args_storage_, args, (size_t)orch_arg_count_ * sizeof(uint64_t));
+        orch_args_ = orch_args_storage_;
+    } else {
+        orch_args_ = nullptr;
+    }
+}
+
+bool Runtime::get_use_pto2_dispatch() const { return use_pto2_dispatch_; }
+void Runtime::set_use_pto2_dispatch(bool v) { use_pto2_dispatch_ = v; }
+
+uint64_t Runtime::get_function_bin_addr(int func_id) const {
+    if (func_id < 0 || func_id >= RUNTIME_MAX_FUNC_ID) return 0;
+    return func_id_to_addr_[func_id];
+}
+void Runtime::set_function_bin_addr(int func_id, uint64_t addr) {
+    if (func_id >= 0 && func_id < RUNTIME_MAX_FUNC_ID) {
+        func_id_to_addr_[func_id] = addr;
+    }
 }
