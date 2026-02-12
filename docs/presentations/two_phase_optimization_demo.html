@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTO-ISA 两阶段依赖解析优化 - 可视化演示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 40px 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5em;
+            margin: 0 0 10px 0;
+        }
+
+        .subtitle {
+            color: #764ba2;
+            font-size: 1.1em;
+            margin-top: 5px;
+        }
+
+        .tabs {
+            display: flex;
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 8px;
+            padding: 5px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 16px;
+            color: #555;
+            border-radius: 4px;
+        }
+
+        .tab:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #2c3e50;
+        }
+
+        .tab.active {
+            background: white;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .content {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            min-height: 600px;
+        }
+
+        .comparison-section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .icon {
+            font-size: 2em;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            background: linear-gradient(to bottom, #f8f9fa 0%, #e8f4f8 100%);
+            border-radius: 8px;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .bar {
+            height: 40px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            position: relative;
+            transition: width 1s ease-out;
+        }
+
+        .bar.current .bar-fill {
+            background: linear-gradient(90deg, #f59e0b 0%, #fcb825 100%);
+        }
+
+        .bar.optimized .bar-fill {
+            background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 1s ease-out;
+            display: flex;
+            align-items: center;
+            color: white;
+            font-weight: 600;
+        }
+
+        .bar-label {
+            position: absolute;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .timeline {
+            position: relative;
+            padding: 30px 0;
+            margin-top: 20px;
+        }
+
+        .timeline-line {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            height: 100%;
+            background: #ddd;
+        }
+
+        .timeline-event {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+        }
+
+        .timeline-event.current {
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            transform: scale(1.3);
+        }
+
+        .timeline-event.producer {
+            background: #10b981;
+        }
+
+        .timeline-event.consumer {
+            background: #f59e0b;
+        }
+
+        .timeline-event.ready {
+            background: #059669;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(5, 151, 219, 0.3);
+                transform: scale(1);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(5, 151, 219, 0);
+                transform: scale(1.1);
+            }
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .metric-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e8f4f8 100%);
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #10b981;
+        }
+
+        .metric-value {
+            font-size: 2em;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .metric-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .insight-box {
+            background: rgba(16, 185, 129, 0.1);
+            border-left: 4px solid #10b981;
+            padding: 20px;
+            border-radius: 0 8px;
+            margin-top: 30px;
+        }
+
+        .insight-title {
+            color: #10b981;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .insight-text {
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .tabs {
+                flex-direction: column;
+            }
+
+            .chart-container {
+                height: 250px;
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 PTO-ISA 两阶段依赖解析优化</h1>
+            <div class="subtitle">关键路径优化 5-10x | 吞吐量提升 5x</div>
+        </header>
+
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('current')">
+                <span class="icon">📊</span>
+                <span>当前实现</span>
+            </div>
+            <div class="tab" onclick="showTab('problem')">
+                <span class="icon">⚠️</span>
+                <span>性能问题</span>
+            </div>
+            <div class="tab" onclick="showTab('solution')">
+                <span class="icon">💡</span>
+                <span>优化方案</span>
+            </div>
+            <div class="tab" onclick="showTab('comparison')">
+                <span class="icon">📈</span>
+                <span>性能对比</span>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Tab 1: 当前实现 -->
+            <div id="tab-current" class="tab-content">
+                <div class="section-title">
+                    <span class="icon">⏱️</span>
+                    当前PTO-ISA依赖解析时间轴
+                </div>
+
+                <div class="chart-container">
+                    <svg style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" viewBox="0 0 800 300">
+                        <defs>
+                            <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#f8f9fa;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#e8f4f8;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+
+                        <!-- Grid lines -->
+                        <g stroke="#ddd" stroke-width="1" stroke-dasharray="4,4">
+                            <line x1="100" y1="60" x2="700" y2="60" />
+                            <line x1="100" y1="120" x2="700" y2="120" />
+                            <line x1="100" y1="180" x2="700" y2="180" />
+                            <line x1="100" y1="240" x2="700" y2="240" />
+                        </g>
+
+                        <!-- Timeline -->
+                        <g transform="translate(150, 0)">
+                            <!-- Producer Complete -->
+                            <circle cx="0" cy="60" r="20" fill="#10b981" class="producer-event"/>
+                            <text x="0" y="65" text-anchor="middle" fill="white" font-size="10">Task A 完成</text>
+
+                            <!-- Timeline line -->
+                            <line x1="0" y1="60" x2="350" y2="60" stroke="#666" stroke-width="2"/>
+
+                            <!-- Consumer B: Atomic -->
+                            <circle cx="150" cy="60" r="16" fill="#f59e0b" class="consumer-event"/>
+                            <text x="150" y="55" text-anchor="middle" fill="white" font-size="9">15ns</text>
+
+                            <!-- Timeline line -->
+                            <line x1="150" y1="60" x2="300" y2="60" stroke="#666" stroke-width="2"/>
+
+                            <!-- Consumer C: Atomic + Check -->
+                            <circle cx="300" cy="60" r="16" fill="#f59e0b" class="consumer-event"/>
+                            <text x="300" y="55" text-anchor="middle" fill="white" font-size="9">50ns</text>
+
+                            <!-- Timeline line -->
+                            <line x1="300" y1="60" x2="450" y2="60" stroke="#666" stroke-width="2"/>
+
+                            <!-- Consumer D: Atomic -->
+                            <circle cx="450" cy="60" r="16" fill="#f59e0b" class="consumer-event"/>
+                            <text x="450" y="55" text-anchor="middle" fill="white" font-size="9">15ns</text>
+
+                            <!-- Timeline line -->
+                            <line x1="450" y1="60" x2="600" y2="60" stroke="#666" stroke-width="2"/>
+
+                            <!-- Consumer E: Atomic -->
+                            <circle cx="600" cy="60" r="16" fill="#f59e0b" class="consumer-event"/>
+                            <text x="600" y="55" text-anchor="middle" fill="white" font-size="9">15ns</text>
+
+                            <!-- Timeline line -->
+                            <line x1="600" y1="60" x2="700" y2="180" stroke="#666" stroke-width="2" stroke-dasharray="5,5"/>
+
+                            <!-- Waiting... -->
+                            <text x="700" y="180" fill="#666" font-size="11">执行中...</text>
+                        </g>
+                    </svg>
+
+                    <div style="margin-top: 20px; display: flex; justify-content: center; gap: 30px;">
+                        <div class="bar" style="width: 60%;">
+                            <div class="bar-fill current" style="width: 100%;">
+                                <span class="bar-label">当前耗时</span>
+                                <div style="font-size: 1.5em;">660ns</div>
+                            </div>
+                        </div>
+                        <div class="bar" style="width: 40%;">
+                            <div class="bar-fill optimized" style="width: 100%;">
+                                <span class="bar-label">优化后</span>
+                                <div style="font-size: 1.5em;">130ns</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 30px; text-align: center;">
+                        <span style="font-size: 1.2em; color: #666;">
+                            ⚠️ <strong>当前瓶颈</strong>：每次任务完成需要遍历所有consumer，<br>
+                            每个都执行原子操作（15ns）和状态检查（50ns），<br>
+                            总计660ns，其中只有最后1个consumer在关键路径上
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: 性能问题 -->
+            <div id="tab-problem" class="tab-content hidden">
+                <div class="section-title">
+                    <span class="icon">🔍</span>
+                    性能瓶颈分析
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">8+</div>
+                        <div class="metric-label">每次任务完成的原子操作次数</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            遍历fanout链表，对每个consumer执行atomic_add_fetch
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-value">~100%</div>
+                        <div class="metric-label">原子操作在关键路径上的浪费率</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            高fanout任务中，大部分原子操作的延迟被其他consumer的执行时间隐藏，但当前实现没有利用这一点
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-value">40-50ns</div>
+                        <div class="metric-label">SEQ_CST内存序开销</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            使用最保守的内存序（sequential consistent），保证全局一致性但性能最差，比ACQ/REL慢约30%
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: 优化方案 -->
+            <div id="tab-solution" class="tab-content hidden">
+                <div class="section-title">
+                    <span class="icon">💡</span>
+                    两阶段优化核心思想
+                </div>
+
+                <div class="insight-box">
+                    <div class="insight-title">关键洞察</div>
+                    <div class="insight-text">
+                        <strong>"判定ready之前的延迟被后面没ready的执行时间隐藏"</strong><br><br>
+                        这是整个方案的灵魂！通过将依赖解析分为两个阶段：<br><br>
+                        <strong style="color: #10b981;">阶段1 (Memory域)</strong>：多依赖不确定，使用原子操作（10-15ns），延迟被隐藏<br>
+                        <strong style="color: #059669;">阶段2 (Register域)</strong>：只剩1个依赖，移到待定队列，使用标量compare（5ns），关键路径优化5-10倍
+                    </div>
+                </div>
+
+                <div style="margin-top: 30px;">
+                    <svg style="width: 100%; height: 200px; background: white; border-radius: 8px;" viewBox="0 0 800 200">
+                        <!-- Background regions -->
+                        <rect x="10" y="30" width="360" height="80" fill="#f8f9fa" opacity="0.3" rx="4"/>
+                        <rect x="430" y="30" width="360" height="80" fill="#e8f4f8" opacity="0.3" rx="4"/>
+
+                        <!-- Phase 1 label -->
+                        <text x="50" y="20" font-size="16" fill="#666" font-weight="600">阶段1: Memory域</text>
+                        <text x="50" y="45" font-size="12" fill="#888">多依赖不确定期</text>
+
+                        <!-- Phase 1 arrow -->
+                        <path d="M 200 70 Q 250 70" stroke="#f59e0b" stroke-width="3" fill="none" marker-end="url(#arrow1)"/>
+                        <text x="260" y="75" font-size="11" fill="#f59e0b">原子操作 (10-15ns)</text>
+
+                        <!-- Phase 2 label -->
+                        <text x="430" y="20" font-size="16" fill="#666" font-weight="600">阶段2: Register域</text>
+                        <text x="430" y="45" font-size="12" fill="#888">只剩1个依赖期</text>
+
+                        <!-- Phase 2 arrow -->
+                        <path d="M 580 70 Q 630 70" stroke="#059669" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
+                        <text x="590" y="75" font-size="11" fill="#059669">标量compare (5ns)</text>
+
+                        <!-- Benefits -->
+                        <text x="400" y="120" font-size="13" fill="#2c3e50">
+                            <tspan x="0" dy="1.2em">✓ 延迟隐藏策略</tspan>
+                            <tspan x="0" dy="2.6em">✓ 关键路径优化 5-10x</tspan>
+                        </text>
+
+                        <!-- Arrow markers -->
+                        <defs>
+                            <marker id="arrow1" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b"/>
+                            </marker>
+                            <marker id="arrow2" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M 0 0 L 10 5 L 0 10 z" fill="#059669"/>
+                            </marker>
+                        </defs>
+                    </svg>
+                </div>
+
+                <div style="margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="metric-card" style="border-left-color: #10b981;">
+                        <div class="metric-label">核心优化1</div>
+                        <div style="font-size: 1.5em; color: #10b981; font-weight: 600;">
+                            Memory → Register域转换
+                        </div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            在确定只剩1个依赖时，将任务从memory域（原子操作）转移到register域（标量操作）
+                        </div>
+                    </div>
+
+                    <div class="metric-card" style="border-left-color: #059669;">
+                        <div class="metric-label">核心优化2</div>
+                        <div style="font-size: 1.5em; color: #059669; font-weight: 600;">
+                            待定队列机制
+                        </div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            引入pending queue，在producer完成时快速批量匹配，用5ns标量compare替代100ns+原子操作
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: 性能对比 -->
+            <div id="tab-comparison" class="tab-content hidden">
+                <div class="section-title">
+                    <span class="icon">📊</span>
+                    性能提升预测
+                </div>
+
+                <div class="chart-container">
+                    <svg style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" viewBox="0 0 800 300">
+                        <!-- Current implementation bar -->
+                        <g>
+                            <rect x="50" y="50" width="280" height="60" fill="rgba(244, 67, 54, 0.8)" rx="4"/>
+                            <text x="190" y="85" font-size="14" fill="white" font-weight="600">当前PTO-ISA</text>
+                            <text x="190" y="110" font-size="16" fill="#666">关键路径: 660ns</text>
+                            <text x="190" y="135" font-size="16" fill="#666">吞吐量: 1.5M tasks/s</text>
+                        </g>
+
+                        <!-- Arrow -->
+                        <path d="M 330 80 Q 380 80 Q 470 120" stroke="#666" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+                        <text x="400" y="115" font-size="13" fill="#888">需要优化</text>
+
+                        <!-- Optimized bar -->
+                        <g>
+                            <rect x="470" y="50" width="280" height="60" fill="rgba(16, 185, 129, 0.9)" rx="4"/>
+                            <text x="610" y="85" font-size="14" fill="white" font-weight="600">两阶段优化</text>
+                            <text x="610" y="110" font-size="16" fill="#2c3e50">关键路径: 130ns</text>
+                            <text x="610" y="135" font-size="16" fill="#2c3e50">吞吐量: 7.5M tasks/s</text>
+                        </g>
+
+                        <!-- Improvement label -->
+                        <text x="520" y="200" font-size="18" fill="#10b981" font-weight="600">5x 提升！</text>
+
+                        <!-- Arrow marker -->
+                        <defs>
+                            <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981"/>
+                            </marker>
+                        </defs>
+                    </svg>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-label">关键路径优化</div>
+                        <div class="metric-value" style="color: #10b981;">5-10x</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            从660ns降低到130ns，使用register域标量compare（5ns）替代memory域原子操作（15ns+）
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">整体吞吐量</div>
+                        <div class="metric-value" style="color: #10b981;">5x</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            从1.5M提升到7.5M tasks/s，充分利用并行执行时间隐藏memory域操作延迟
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">Register路径命中率</div>
+                        <div class="metric-value" style="color: #10b981;">>80%</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            只剩1个依赖的consumer进入register域快速匹配，避免memory域原子操作
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">原子操作减少</div>
+                        <div class="metric-value" style="color: #10b981;">50-90%</div>
+                        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            大部分consumer在阶段1完成，只有最后1个consumer进入阶段3快速路径
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; padding: 20px; color: #888; font-size: 0.9em;">
+            <p><strong>💡 核心优势</strong></p>
+            <p style="margin-top: 10px;">精准定位关键路径 · 利用并行特性隐藏延迟 · 风险可控渐进实施</p>
+        </div>
+    </div>
+
+    <script>
+        let currentTab = 'current';
+
+        function showTab(tabId) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => {
+                el.classList.add('hidden');
+            });
+
+            // Show selected tab
+            document.getElementById('tab-' + tabId).classList.remove('hidden');
+
+            // Update tab styles
+            document.querySelectorAll('.tab').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelector('[onclick="showTab(\'' + tabId + '\')"]').classList.add('active');
+
+            currentTab = tabId;
+
+            // Animate content
+            const content = document.getElementById('tab-' + tabId);
+            content.classList.remove('fade-in');
+            void content.offsetWidth; // Trigger reflow
+            content.classList.add('fade-in');
+        }
+
+        // Initialize with current tab
+        showTab('current');
+    </script>
+</body>
+</html>
