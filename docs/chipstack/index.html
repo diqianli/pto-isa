@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChipStack Research | ChipStack 深度技术调研</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <style>
+    /* Additional inline styles for dynamic elements */
+    .lang-toggle {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+    }
+    .lang-btn {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+    .lang-btn:hover {
+      background: rgba(0, 180, 216, 0.3);
+    }
+    .cn-text { display: inline; }
+    .en-text { display: none; }
+    body.show-en .cn-text { display: none; }
+    body.show-en .en-text { display: inline; }
+
+    /* Navigation */
+    .nav-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 2rem;
+      padding: 1rem;
+      background: rgba(255,255,255,0.03);
+      border-radius: 15px;
+    }
+    .nav-tab {
+      padding: 0.75rem 1.5rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-size: 0.9rem;
+    }
+    .nav-tab:hover, .nav-tab.active {
+      background: rgba(0, 180, 216, 0.2);
+      border-color: var(--accent-blue);
+      color: white;
+    }
+    .section-content {
+      display: none;
+    }
+    .section-content.active {
+      display: block;
+    }
+
+    /* Academic Stats */
+    .academic-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .academic-stat {
+      text-align: center;
+      padding: 1.5rem;
+      background: rgba(0, 180, 216, 0.05);
+      border-radius: 15px;
+      border: 1px solid rgba(0, 180, 216, 0.1);
+    }
+    .academic-stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent-cyan);
+    }
+    .academic-stat-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 0.25rem;
+    }
+
+    /* Chart Container */
+    .chart-wrapper {
+      background: rgba(255,255,255,0.02);
+      border-radius: 15px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+    }
+    .chart-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
+    }
+    .chart-container {
+      width: 100%;
+      min-height: 250px;
+    }
+
+    /* Paper List */
+    .paper-list {
+      list-style: none;
+      padding: 0;
+    }
+    .paper-item {
+      padding: 1.25rem;
+      background: rgba(255,255,255,0.02);
+      border-radius: 12px;
+      margin-bottom: 1rem;
+      border-left: 3px solid var(--accent-blue);
+    }
+    .paper-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 0.5rem;
+    }
+    .paper-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+    .paper-badge {
+      background: rgba(0, 180, 216, 0.15);
+      padding: 0.25rem 0.75rem;
+      border-radius: 15px;
+      color: var(--accent-cyan);
+      font-size: 0.8rem;
+    }
+
+    /* Tech Lineage */
+    .lineage-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin: 2rem 0;
+    }
+    @media (max-width: 768px) {
+      .lineage-container {
+        grid-template-columns: 1fr;
+      }
+    }
+    .founder-card {
+      background: rgba(255,255,255,0.02);
+      border-radius: 20px;
+      padding: 2rem;
+    }
+    .founder-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .founder-avatar {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.8rem;
+      font-weight: bold;
+    }
+    .founder-name {
+      font-size: 1.3rem;
+      font-weight: 600;
+    }
+    .founder-role {
+      color: var(--accent-cyan);
+      font-size: 0.9rem;
+    }
+    .exp-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .exp-icon {
+      font-size: 1.2rem;
+    }
+    .exp-content {
+      flex: 1;
+    }
+    .exp-title {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    .exp-desc {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    /* Patent Table */
+    .patent-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+    .patent-table th,
+    .patent-table td {
+      padding: 1rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .patent-table th {
+      color: var(--accent-cyan);
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .patent-table tr:hover {
+      background: rgba(255,255,255,0.02);
+    }
+
+    /* Patentability Matrix */
+    .patentability-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .patent-item {
+      background: rgba(255,255,255,0.02);
+      border-radius: 15px;
+      padding: 1.5rem;
+    }
+    .patent-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .patent-item-title {
+      font-weight: 600;
+    }
+    .patent-potential {
+      padding: 0.25rem 0.75rem;
+      border-radius: 15px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .potential-high { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .potential-medium { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+
+    /* Product Badge */
+    .product-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: rgba(255,255,255,0.02);
+      border-radius: 10px;
+    }
+    .feature-icon {
+      font-size: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-animation"></div>
+
+  <!-- Language Toggle -->
+  <div class="lang-toggle">
+    <button class="lang-btn" onclick="toggleLanguage()">
+      <span class="cn-text">EN</span>
+      <span class="en-text">中文</span>
+    </button>
+  </div>
+
+  <!-- Header -->
+  <header>
+    <div class="logo-container">
+      <div class="logo">CS</div>
+      <div>
+        <h1>ChipStack</h1>
+        <p class="subtitle">
+          <span class="cn-text">AI驱动的芯片验证革命 - 深度技术调研</span>
+          <span class="en-text">AI-Powered Chip Verification - Deep Tech Research</span>
+        </p>
+      </div>
+    </div>
+    <p class="subtitle-en">
+      <span class="cn-text">Acquired by Cadence | $700M Valuation | AI Super Agent 2026</span>
+      <span class="en-text">被Cadence收购 | 7亿美元估值 | AI超级代理 2026</span>
+    </p>
+  </header>
+
+  <div class="container">
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <div class="nav-tab active" onclick="showSection('overview')">
+        <span class="cn-text">概览</span>
+        <span class="en-text">Overview</span>
+      </div>
+      <div class="nav-tab" onclick="showSection('academic')">
+        <span class="cn-text">学术背景</span>
+        <span class="en-text">Academic</span>
+      </div>
+      <div class="nav-tab" onclick="showSection('lineage')">
+        <span class="cn-text">技术脉络</span>
+        <span class="en-text">Tech Lineage</span>
+      </div>
+      <div class="nav-tab" onclick="showSection('patents')">
+        <span class="cn-text">专利分析</span>
+        <span class="en-text">Patents</span>
+      </div>
+      <div class="nav-tab" onclick="showSection('product')">
+        <span class="cn-text">产品路线</span>
+        <span class="en-text">Product</span>
+      </div>
+    </nav>
+
+    <!-- Section: Overview -->
+    <div id="section-overview" class="section-content active">
+      <!-- Company Overview -->
+      <section class="glass-card animate-in">
+        <h2 class="section-title">
+          <span class="cn-text">公司概览</span>
+          <span class="en-text">Company Overview</span>
+        </h2>
+        <div class="overview-grid">
+          <div class="stat-item">
+            <div class="stat-value">2023</div>
+            <div class="stat-label">
+              <span class="cn-text">成立年份</span>
+              <span class="en-text">Founded</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">~20</div>
+            <div class="stat-label">
+              <span class="cn-text">团队规模</span>
+              <span class="en-text">Team Size</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">$700M</div>
+            <div class="stat-label">
+              <span class="cn-text">收购估值</span>
+              <span class="en-text">Acquisition</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">10x</div>
+            <div class="stat-label">
+              <span class="cn-text">效率提升</span>
+              <span class="en-text">Efficiency Gain</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">
+              <span class="cn-text">西雅图</span>
+              <span class="en-text">Seattle</span>
+            </div>
+            <div class="stat-label">
+              <span class="cn-text">总部位置</span>
+              <span class="en-text">Headquarters</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">
+              <span class="cn-text">已收购</span>
+              <span class="en-text">Acquired</span>
+            </div>
+            <div class="stat-label">
+              <span class="cn-text">被Cadence收购</span>
+              <span class="en-text">By Cadence</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Timeline -->
+      <section class="glass-card animate-in delay-1">
+        <h2 class="section-title">
+          <span class="cn-text">发展历程</span>
+          <span class="en-text">Timeline</span>
+        </h2>
+        <div class="timeline">
+          <div class="timeline-item" onclick="toggleTimeline(this)">
+            <div class="timeline-year">2023</div>
+            <div class="timeline-event">
+              <span class="cn-text">公司成立</span>
+              <span class="en-text">Company Founded</span>
+            </div>
+            <div class="timeline-description">
+              <span class="cn-text">ChipStack由Kartik Hegde和Hamid Shojaei在西雅图创立，专注于AI驱动的芯片验证技术。</span>
+              <span class="en-text">ChipStack was founded in Seattle by Kartik Hegde and Hamid Shojaei.</span>
+            </div>
+          </div>
+          <div class="timeline-item" onclick="toggleTimeline(this)">
+            <div class="timeline-year">2024</div>
+            <div class="timeline-event">
+              <span class="cn-text">种子轮融资</span>
+              <span class="en-text">Seed Funding</span>
+            </div>
+            <div class="timeline-description">
+              <span class="cn-text">从AI2孵化器、Khosla Ventures等投资者处获得超过700万美元融资。</span>
+              <span class="en-text">Raised $7M+ from AI2 Incubator, Khosla Ventures, and others.</span>
+            </div>
+          </div>
+          <div class="timeline-item" onclick="toggleTimeline(this)">
+            <div class="timeline-year">2025.11</div>
+            <div class="timeline-event">
+              <span class="cn-text">被Cadence收购</span>
+              <span class="en-text">Acquired by Cadence</span>
+            </div>
+            <div class="timeline-description">
+              <span class="cn-text">被EDA巨头Cadence Design Systems收购，估值约7亿美元，团队加入圣何塞总部。</span>
+              <span class="en-text">Acquired by Cadence Design Systems for ~$700M valuation.</span>
+            </div>
+          </div>
+          <div class="timeline-item" onclick="toggleTimeline(this)">
+            <div class="timeline-year">2026.02</div>
+            <div class="timeline-event">
+              <span class="cn-text">AI Super Agent发布</span>
+              <span class="en-text">AI Super Agent Launch</span>
+            </div>
+            <div class="timeline-description">
+              <span class="cn-text">Cadence发布ChipStack AI Super Agent，全球首个EDA AI超级代理，效率提升10倍。</span>
+              <span class="en-text">Cadence launches ChipStack AI Super Agent, world's first EDA AI Super Agent.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Five-Agent Architecture -->
+      <section class="glass-card animate-in delay-2">
+        <h2 class="section-title">
+          <span class="cn-text">五智能体架构</span>
+          <span class="en-text">Five-Agent Architecture</span>
+        </h2>
+        <div class="agent-architecture">
+          <div class="agent-node">
+            <div class="agent-icon">🧠</div>
+            <div class="agent-name">
+              <span class="cn-text">设计意图</span>
+              <span class="en-text">Design Intent</span>
+            </div>
+            <div class="agent-detail">
+              <span class="cn-text">从RTL代码或规范中推断设计意图，构建心智模型。</span>
+              <span class="en-text">Infers design intent from RTL or specifications.</span>
+            </div>
+          </div>
+          <div class="agent-node">
+            <div class="agent-icon">📋</div>
+            <div class="agent-name">
+              <span class="cn-text">测试规划</span>
+              <span class="en-text">Test Planning</span>
+            </div>
+            <div class="agent-detail">
+              <span class="cn-text">引导式测试计划创建，基于设计意图自动生成测试策略。</span>
+              <span class="en-text">Guided test plan creation based on design intent.</span>
+            </div>
+          </div>
+          <div class="agent-node">
+            <div class="agent-icon">⚙️</div>
+            <div class="agent-name">
+              <span class="cn-text">测试平台</span>
+              <span class="en-text">Testbench</span>
+            </div>
+            <div class="agent-detail">
+              <span class="cn-text">自动化测试平台生成和更新。</span>
+              <span class="en-text">Automated testbench generation and updates.</span>
+            </div>
+          </div>
+          <div class="agent-node">
+            <div class="agent-icon">✅</div>
+            <div class="agent-name">
+              <span class="cn-text">验证执行</span>
+              <span class="en-text">Verification</span>
+            </div>
+            <div class="agent-detail">
+              <span class="cn-text">形式验证、单元仿真、UVM、功能覆盖率。</span>
+              <span class="en-text">Formal verification, simulation, UVM, coverage.</span>
+            </div>
+          </div>
+          <div class="agent-node">
+            <div class="agent-icon">🔍</div>
+            <div class="agent-name">
+              <span class="cn-text">智能调试</span>
+              <span class="en-text">Debug</span>
+            </div>
+            <div class="agent-detail">
+              <span class="cn-text">智能调试辅助，自动分析失败原因。</span>
+              <span class="en-text">Intelligent debug assistance and failure analysis.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Customer Results Chart -->
+      <section class="glass-card animate-in delay-3">
+        <h2 class="section-title">
+          <span class="cn-text">客户效果对比</span>
+          <span class="en-text">Customer Results</span>
+        </h2>
+        <div class="chart-wrapper">
+          <div id="customer-chart" class="chart-container"></div>
+        </div>
+      </section>
+
+      <!-- Investors -->
+      <section class="glass-card">
+        <h2 class="section-title">
+          <span class="cn-text">投资方</span>
+          <span class="en-text">Investors</span>
+        </h2>
+        <div class="investor-grid">
+          <div class="investor-item">
+            <div class="investor-name">AI2 Incubator</div>
+            <div class="investor-type">
+              <span class="cn-text">孵化器 · 西雅图</span>
+              <span class="en-text">Incubator · Seattle</span>
+            </div>
+          </div>
+          <div class="investor-item">
+            <div class="investor-name">Khosla Ventures</div>
+            <div class="investor-type">
+              <span class="cn-text">风投 · 门洛帕克</span>
+              <span class="en-text">VC · Menlo Park</span>
+            </div>
+          </div>
+          <div class="investor-item">
+            <div class="investor-name">Cerberus Capital</div>
+            <div class="investor-type">
+              <span class="cn-text">私募 · 纽约</span>
+              <span class="en-text">PE · New York</span>
+            </div>
+          </div>
+          <div class="investor-item">
+            <div class="investor-name">Clear Ventures</div>
+            <div class="investor-type">
+              <span class="cn-text">风投 · 帕洛阿尔托</span>
+              <span class="en-text">VC · Palo Alto</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Section: Academic -->
+    <div id="section-academic" class="section-content">
+      <section class="glass-card">
+        <h2 class="section-title">
+          <span class="cn-text">Kartik Hegde 学术影响力</span>
+          <span class="en-text">Kartik Hegde Academic Impact</span>
+        </h2>
+
+        <div class="academic-stats">
+          <div class="academic-stat">
+            <div class="academic-stat-value" data-counter="1044867">0</div>
+            <div class="academic-stat-label">
+              <span class="cn-text">总引用数</span>
+              <span class="en-text">Citations</span>
+            </div>
+          </div>
+          <div class="academic-stat">
+            <div class="academic-stat-value">77</div>
+            <div class="academic-stat-label">h-index</div>
+          </div>
+          <div class="academic-stat">
+            <div class="academic-stat-value">66</div>
+            <div class="academic-stat-label">i10-index</div>
+          </div>
+          <div class="academic-stat">
+            <div class="academic-stat-value">UIUC</div>
+            <div class="academic-stat-label">
+              <span class="cn-text">博士学位</span>
+              <span class="en-text">Ph.D.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-wrapper">
+          <div class="chart-title">
+            <span class="cn-text">学术引用增长趋势</span>
+            <span class="en-text">Citation Growth Trend</span>
+          </div>
+          <div id="academic-chart" class="chart-container"></div>
+        </div>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">代表性论文重点解读</span>
+          <span class="en-text">Key Papers Analysis</span>
+        </h3>
+
+        <!-- Paper 1: UCNN -->
+        <div class="paper-item" style="margin-bottom: 1.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+            <span class="paper-badge">ISCA 2018</span>
+            <span class="paper-badge" style="background: rgba(123, 44, 191, 0.2); color: #a78bfa;">
+              <span class="cn-text">高引用</span><span class="en-text">Highly Cited</span>
+            </span>
+          </div>
+          <div class="paper-title" style="font-size: 1.1rem;">UCNN: Exploiting Computational Reuse in Deep Neural Networks via Weight Repression</div>
+
+          <div style="margin-top: 1rem; padding: 1rem; background: rgba(0, 180, 216, 0.05); border-radius: 10px;">
+            <h4 style="color: var(--accent-cyan); margin-bottom: 0.5rem; font-size: 0.9rem;">
+              <span class="cn-text">核心创新</span><span class="en-text">Core Innovation</span>
+            </h4>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6;">
+              <span class="cn-text">发现神经网络中大量权重值重复出现的现象，提出<strong style="color: var(--accent-cyan);">权重压缩(Weight Repression)</strong>技术，通过识别和复用重复权重来减少乘法运算次数，实现<strong style="color: var(--accent-cyan);">2-4倍的计算加速</strong>。</span>
+              <span class="en-text">Discovered that many weight values in neural networks appear repeatedly. Proposed <strong style="color: var(--accent-cyan);">Weight Repression</strong> to identify and reuse duplicate weights, achieving <strong style="color: var(--accent-cyan);">2-4x speedup</strong>.</span>
+            </p>
+          </div>
+
+          <div style="margin-top: 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div>
+              <h4 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.85rem;">
+                <span class="cn-text">技术要点</span><span class="en-text">Technical Points</span>
+              </h4>
+              <ul style="font-size: 0.85rem; color: var(--text-secondary); padding-left: 1.2rem; line-height: 1.8;">
+                <li><span class="cn-text">权重聚类与量化</span><span class="en-text">Weight clustering & quantization</span></li>
+                <li><span class="cn-text">计算复用架构设计</span><span class="en-text">Compute reuse architecture</span></li>
+                <li><span class="cn-text">内存访问优化</span><span class="en-text">Memory access optimization</span></li>
+              </ul>
+            </div>
+            <div>
+              <h4 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.85rem;">
+                <span class="cn-text">与ChipStack的关联</span><span class="en-text">Connection to ChipStack</span>
+              </h4>
+              <ul style="font-size: 0.85rem; color: var(--text-secondary); padding-left: 1.2rem; line-height: 1.8;">
+                <li><span class="cn-text">AI模型效率优化经验</span><span class="en-text">AI model efficiency optimization</span></li>
+                <li><span class="cn-text">硬件加速器设计思维</span><span class="en-text">Hardware accelerator design</span></li>
+                <li><span class="cn-text">与NVIDIA的合作基础</span><span class="en-text">NVIDIA collaboration</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Paper 2: Dynamic Reflexive Tiling -->
+        <div class="paper-item" style="margin-bottom: 1.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+            <span class="paper-badge">ASPLOS 2023</span>
+          </div>
+          <div class="paper-title" style="font-size: 1.1rem;">Accelerating Sparse Data Orchestration via Dynamic Reflexive Tiling</div>
+
+          <div style="margin-top: 1rem; padding: 1rem; background: rgba(123, 44, 191, 0.05); border-radius: 10px;">
+            <h4 style="color: var(--accent-cyan); margin-bottom: 0.5rem; font-size: 0.9rem;">
+              <span class="cn-text">核心创新</span><span class="en-text">Core Innovation</span>
+            </h4>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6;">
+              <span class="cn-text">针对稀疏数据处理的<strong style="color: var(--accent-cyan);">动态自反分块(Dynamic Reflexive Tiling)</strong>技术，能够根据数据稀疏模式动态调整计算分块策略，显著提升不规则数据访问模式的处理效率。</span>
+              <span class="en-text"><strong style="color: var(--accent-cyan);">Dynamic Reflexive Tiling</strong> for sparse data processing, dynamically adjusting computation tiling based on data sparsity patterns.</span>
+            </p>
+          </div>
+
+          <div style="margin-top: 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div>
+              <h4 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.85rem;">
+                <span class="cn-text">技术要点</span><span class="en-text">Technical Points</span>
+              </h4>
+              <ul style="font-size: 0.85rem; color: var(--text-secondary); padding-left: 1.2rem; line-height: 1.8;">
+                <li><span class="cn-text">运行时数据流分析</span><span class="en-text">Runtime dataflow analysis</span></li>
+                <li><span class="cn-text">自适应分块策略</span><span class="en-text">Adaptive tiling strategy</span></li>
+                <li><span class="cn-text">多机构合作 (UIUC/NVIDIA/MIT)</span><span class="en-text">Multi-institution collaboration</span></li>
+              </ul>
+            </div>
+            <div>
+              <h4 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.85rem;">
+                <span class="cn-text">与ChipStack的关联</span><span class="en-text">Connection to ChipStack</span>
+              </h4>
+              <ul style="font-size: 0.85rem; color: var(--text-secondary); padding-left: 1.2rem; line-height: 1.8;">
+                <li><span class="cn-text">复杂系统优化思维</span><span class="en-text">Complex system optimization</span></li>
+                <li><span class="cn-text">动态适应性设计</span><span class="en-text">Dynamic adaptive design</span></li>
+                <li><span class="cn-text">多智能体协同理论基础</span><span class="en-text">Multi-agent coordination theory</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Research Impact Summary -->
+        <div style="margin-top: 1.5rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(0, 180, 216, 0.1), rgba(123, 44, 191, 0.1)); border-radius: 15px; border: 1px solid rgba(0, 180, 216, 0.2);">
+          <h4 style="color: var(--accent-cyan); margin-bottom: 0.75rem;">
+            <span class="cn-text">学术研究对ChipStack的核心贡献</span><span class="en-text">Academic Research Contribution to ChipStack</span>
+          </h4>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <div style="text-align: center; padding: 0.75rem;">
+              <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">🧠</div>
+              <div style="font-size: 0.9rem; font-weight: 600;"><span class="cn-text">系统级思维</span><span class="en-text">System-level Thinking</span></div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary);"><span class="cn-text">五智能体协同架构</span><span class="en-text">Five-agent architecture</span></div>
+            </div>
+            <div style="text-align: center; padding: 0.75rem;">
+              <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">⚡</div>
+              <div style="font-size: 0.9rem; font-weight: 600;"><span class="cn-text">效率优化</span><span class="en-text">Efficiency Optimization</span></div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary);"><span class="cn-text">AI验证模型加速</span><span class="en-text">AI verification speedup</span></div>
+            </div>
+            <div style="text-align: center; padding: 0.75rem;">
+              <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">🔗</div>
+              <div style="font-size: 0.9rem; font-weight: 600;"><span class="cn-text">产业网络</span><span class="en-text">Industry Network</span></div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary);"><span class="cn-text">NVIDIA/Meta合作</span><span class="en-text">NVIDIA/Meta collaboration</span></div>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">荣誉与奖项</span>
+          <span class="en-text">Honors & Awards</span>
+        </h3>
+        <div class="feature-grid">
+          <div class="feature-item">
+            <span class="feature-icon">🏆</span>
+            <div>
+              <strong>Facebook Fellowship</strong>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);">2019</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feature-icon">🎓</span>
+            <div>
+              <strong><span class="cn-text">导师: Christopher Fletcher</span><span class="en-text">Advisor: Christopher Fletcher</span></strong>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);"><span class="cn-text">现任UC Berkeley教授</span><span class="en-text">Now at UC Berkeley</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-wrapper" style="margin-top: 2rem;">
+          <div class="chart-title">
+            <span class="cn-text">技术能力雷达图</span>
+            <span class="en-text">Technical Skills Radar</span>
+          </div>
+          <div id="skills-radar" class="chart-container"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Section: Tech Lineage -->
+    <div id="section-lineage" class="section-content">
+      <section class="glass-card">
+        <h2 class="section-title">
+          <span class="cn-text">技术传承脉络</span>
+          <span class="en-text">Technology Lineage</span>
+        </h2>
+
+        <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem; line-height: 1.6;">
+          <span class="cn-text">ChipStack的技术创新建立在两位创始人深厚的技术积累之上。<strong style="color: var(--accent-cyan);">Kartik Hegde</strong>的学术研究为AI验证技术提供了理论基础，<strong style="color: var(--accent-cyan);">Hamid Shojaei</strong>的工业经验确保了产品的实用性。</span>
+          <span class="en-text">ChipStack's innovation builds on deep technical expertise. <strong style="color: var(--accent-cyan);">Kartik Hegde</strong>'s academic research provides theoretical foundation, while <strong style="color: var(--accent-cyan);">Hamid Shojaei</strong>'s industry experience ensures product practicality.</span>
+        </p>
+
+        <div class="lineage-container">
+          <div class="founder-card">
+            <div class="founder-header">
+              <div class="founder-avatar">KH</div>
+              <div>
+                <div class="founder-name">Kartik Hegde</div>
+                <div class="founder-role">CEO & Co-founder</div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">🎓</span>
+              <div class="exp-content">
+                <div class="exp-title">UIUC Ph.D. (2022)</div>
+                <div class="exp-desc"><span class="cn-text">计算机科学博士，100万+学术引用</span><span class="en-text">CS Ph.D., 1M+ citations</span></div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">🏆</span>
+              <div class="exp-content">
+                <div class="exp-title">Facebook Fellowship (2019)</div>
+                <div class="exp-desc"><span class="cn-text">移动和IoT设备深度学习加速</span><span class="en-text">DL acceleration for mobile/IoT</span></div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">🔬</span>
+              <div class="exp-content">
+                <div class="exp-title">Meta Research Intern</div>
+                <div class="exp-desc"><span class="cn-text">AI/ML系统研究</span><span class="en-text">AI/ML systems research</span></div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">💚</span>
+              <div class="exp-content">
+                <div class="exp-title">NVIDIA Researcher</div>
+                <div class="exp-desc"><span class="cn-text">GPU计算、深度学习加速</span><span class="en-text">GPU computing, DL acceleration</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="founder-card">
+            <div class="founder-header">
+              <div class="founder-avatar">HS</div>
+              <div>
+                <div class="founder-name">Hamid Shojaei</div>
+                <div class="founder-role">CTO & Co-founder</div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">🔍</span>
+              <div class="exp-content">
+                <div class="exp-title">Google TPU Founding Member</div>
+                <div class="exp-desc"><span class="cn-text">AI加速器平台奠基性贡献，支持AlphaGo</span><span class="en-text">Foundational TPU work, AlphaGo support</span></div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">💡</span>
+              <div class="exp-content">
+                <div class="exp-title">Lightmatter</div>
+                <div class="exp-desc"><span class="cn-text">硅光子学AI加速，公司估值$4.4B</span><span class="en-text">Silicon photonics AI, $4.4B valuation</span></div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">📱</span>
+              <div class="exp-content">
+                <div class="exp-title">Qualcomm</div>
+                <div class="exp-desc"><span class="cn-text">芯片设计和验证，Snapdragon系列</span><span class="en-text">Chip design, Snapdragon series</span></div>
+              </div>
+            </div>
+            <div class="exp-item">
+              <span class="exp-icon">⚡</span>
+              <div class="exp-content">
+                <div class="exp-title"><span class="cn-text">技术专长</span><span class="en-text">Expertise</span></div>
+                <div class="exp-desc"><span class="cn-text">ASIC设计、AI硬件加速、硅光子学</span><span class="en-text">ASIC, AI hardware, silicon photonics</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">技术传承映射</span>
+          <span class="en-text">Technology Mapping</span>
+        </h3>
+        <table class="patent-table">
+          <thead>
+            <tr>
+              <th><span class="cn-text">来源</span><span class="en-text">Source</span></th>
+              <th><span class="cn-text">技术贡献</span><span class="en-text">Contribution</span></th>
+              <th><span class="cn-text">ChipStack应用</span><span class="en-text">Application</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Google TPU</td>
+              <td><span class="cn-text">AI加速器设计经验</span><span class="en-text">AI accelerator design</span></td>
+              <td><span class="cn-text">理解芯片验证痛点</span><span class="en-text">Understanding verification pain points</span></td>
+            </tr>
+            <tr>
+              <td>Lightmatter</td>
+              <td><span class="cn-text">新兴计算架构</span><span class="en-text">Emerging architectures</span></td>
+              <td><span class="cn-text">创新思维方法</span><span class="en-text">Innovative thinking</span></td>
+            </tr>
+            <tr>
+              <td>UIUC Research</td>
+              <td><span class="cn-text">神经网络优化</span><span class="en-text">Neural network optimization</span></td>
+              <td><span class="cn-text">AI模型优化应用</span><span class="en-text">AI model optimization</span></td>
+            </tr>
+            <tr>
+              <td>Meta/NVIDIA</td>
+              <td><span class="cn-text">工业界经验</span><span class="en-text">Industry experience</span></td>
+              <td><span class="cn-text">产品化能力</span><span class="en-text">Product development</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- Section: Patents -->
+    <div id="section-patents" class="section-content">
+      <section class="glass-card">
+        <h2 class="section-title">
+          <span class="cn-text">专利分析</span>
+          <span class="en-text">Patent Analysis</span>
+        </h2>
+
+        <div class="product-badge">
+          <span class="cn-text">ChipStack专利状态: 暂无公开专利 (公司成立时间短)</span>
+          <span class="en-text">ChipStack Patents: None public yet (recent founding)</span>
+        </div>
+
+        <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+          <span class="cn-text">公司成立于2023年，专利申请通常需要1-3年才公开。IP已随2025年11月收购转让给Cadence Design Systems。</span>
+          <span class="en-text">Founded in 2023, patents typically take 1-3 years to become public. IP transferred to Cadence in Nov 2025.</span>
+        </p>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">技术可专利性分析</span>
+          <span class="en-text">Patentability Analysis</span>
+        </h3>
+
+        <div class="patentability-grid">
+          <div class="patent-item">
+            <div class="patent-item-header">
+              <div class="patent-item-title">
+                <span class="cn-text">五智能体验证架构</span>
+                <span class="en-text">Five-Agent Architecture</span>
+              </div>
+              <span class="patent-potential potential-high">High</span>
+            </div>
+            <p style="font-size: 0.9rem; color: var(--text-secondary);">
+              <span class="cn-text">新颖的多智能体方法，每个智能体有明确定义的角色和协作机制。</span>
+              <span class="en-text">Novel multi-agent approach with defined roles and collaboration.</span>
+            </p>
+          </div>
+          <div class="patent-item">
+            <div class="patent-item-header">
+              <div class="patent-item-title">
+                <span class="cn-text">设计意图心智模型</span>
+                <span class="en-text">Design Intent Mental Model</span>
+              </div>
+              <span class="patent-potential potential-high">High</span>
+            </div>
+            <p style="font-size: 0.9rem; color: var(--text-secondary);">
+              <span class="cn-text">独特的从RTL/规范推断设计意图的方法。</span>
+              <span class="en-text">Unique approach to infer design intent from RTL/specs.</span>
+            </p>
+          </div>
+          <div class="patent-item">
+            <div class="patent-item-header">
+              <div class="patent-item-title">
+                <span class="cn-text">自然语言验证控制</span>
+                <span class="en-text">NL Verification Control</span>
+              </div>
+              <span class="patent-potential potential-medium">Medium-High</span>
+            </div>
+            <p style="font-size: 0.9rem; color: var(--text-secondary);">
+              <span class="cn-text">LLM技术与EDA工作流的创新集成。</span>
+              <span class="en-text">Innovative LLM integration with EDA workflows.</span>
+            </p>
+          </div>
+          <div class="patent-item">
+            <div class="patent-item-header">
+              <div class="patent-item-title">
+                <span class="cn-text">自动化测试平台生成</span>
+                <span class="en-text">Automated Testbench Gen</span>
+              </div>
+              <span class="patent-potential potential-medium">Medium</span>
+            </div>
+            <p style="font-size: 0.9rem; color: var(--text-secondary);">
+              <span class="cn-text">结合设计意图理解的增强型自动生成。</span>
+              <span class="en-text">Enhanced by design intent understanding.</span>
+            </p>
+          </div>
+        </div>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">技术方向专利活动</span>
+          <span class="en-text">Patent Activity by Direction</span>
+        </h3>
+
+        <div class="chart-wrapper">
+          <table class="patent-table">
+            <thead>
+              <tr>
+                <th><span class="cn-text">方向</span><span class="en-text">Direction</span></th>
+                <th><span class="cn-text">活动水平</span><span class="en-text">Activity</span></th>
+                <th><span class="cn-text">主要玩家</span><span class="en-text">Key Players</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="cn-text">AI驱动验证自动化</span><span class="en-text">AI-driven Verification</span></td>
+                <td><span class="patent-potential potential-high">High</span></td>
+                <td>Cadence, Synopsys, Siemens</td>
+              </tr>
+              <tr>
+                <td><span class="cn-text">设计意图理解</span><span class="en-text">Design Intent</span></td>
+                <td><span class="patent-potential potential-medium">Medium-High</span></td>
+                <td><span class="cn-text">学术机构, EDA供应商</span><span class="en-text">Academic, EDA vendors</span></td>
+              </tr>
+              <tr>
+                <td><span class="cn-text">多智能体验证系统</span><span class="en-text">Multi-agent Systems</span></td>
+                <td><span style="background: rgba(123, 44, 191, 0.2); color: #7b2cbf; padding: 0.25rem 0.75rem; border-radius: 15px; font-size: 0.8rem;"><span class="cn-text">新兴</span><span class="en-text">Emerging</span></span></td>
+                <td>ChipStack/Cadence</td>
+              </tr>
+              <tr>
+                <td><span class="cn-text">EDA自然语言接口</span><span class="en-text">NL EDA Interface</span></td>
+                <td><span style="background: rgba(123, 44, 191, 0.2); color: #7b2cbf; padding: 0.25rem 0.75rem; border-radius: 15px; font-size: 0.8rem;"><span class="cn-text">新兴</span><span class="en-text">Emerging</span></span></td>
+                <td>ChipStack/Cadence</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Section: Product -->
+    <div id="section-product" class="section-content">
+      <section class="glass-card">
+        <h2 class="section-title">
+          <span class="cn-text">产品路线</span>
+          <span class="en-text">Product Roadmap</span>
+        </h2>
+
+        <div class="product-badge">
+          <span class="cn-text">最新产品: ChipStack AI Super Agent (2026.02.10)</span>
+          <span class="en-text">Latest: ChipStack AI Super Agent (2026.02.10)</span>
+        </div>
+
+        <h3 style="margin: 1.5rem 0 1rem;">
+          <span class="cn-text">ChipStack AI Super Agent</span>
+          <span class="en-text">ChipStack AI Super Agent</span>
+        </h3>
+
+        <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+          <span class="cn-text">全球首个EDA AI超级代理，设计和测试平台编码效率提升10倍，端到端验证辅助。</span>
+          <span class="en-text">World's first EDA AI Super Agent, 10x coding efficiency improvement, end-to-end verification assistance.</span>
+        </p>
+
+        <div class="feature-grid">
+          <div class="feature-item">
+            <span class="feature-icon">🚀</span>
+            <div>
+              <strong>10x <span class="cn-text">效率提升</span><span class="en-text">Efficiency</span></strong>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);"><span class="cn-text">编码效率提升10倍</span><span class="en-text">10x coding efficiency</span></div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feature-icon">💬</span>
+            <div>
+              <strong><span class="cn-text">自然语言界面</span><span class="en-text">NL Interface</span></strong>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);"><span class="cn-text">自然语言控制</span><span class="en-text">Natural language control</span></div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feature-icon">💚</span>
+            <div>
+              <strong>NVIDIA NeMo</strong>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);">Nemotron <span class="cn-text">模型支持</span><span class="en-text">support</span></div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feature-icon">🤖</span>
+            <div>
+              <strong>OpenAI GPT</strong>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);"><span class="cn-text">云托管模型支持</span><span class="en-text">Cloud model support</span></div>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">早期部署客户效果</span>
+          <span class="en-text">Early Customer Results</span>
+        </h3>
+
+        <div class="customer-grid">
+          <div class="customer-card">
+            <div class="customer-name">Altera</div>
+            <div class="customer-type">
+              <span class="cn-text">生产环境</span>
+              <span class="en-text">Production</span>
+            </div>
+            <div class="customer-result">
+              <strong style="color: var(--accent-cyan); font-size: 1.5rem;">~10x</strong>
+              <div><span class="cn-text">验证工作量降低</span><span class="en-text">Reduction in effort</span></div>
+            </div>
+          </div>
+          <div class="customer-card">
+            <div class="customer-name">Tenstorrent</div>
+            <div class="customer-type">
+              <span class="cn-text">生产环境</span>
+              <span class="en-text">Production</span>
+            </div>
+            <div class="customer-result">
+              <strong style="color: var(--accent-cyan); font-size: 1.5rem;">4x</strong>
+              <div><span class="cn-text">验证时间缩短</span><span class="en-text">Faster verification</span></div>
+            </div>
+          </div>
+          <div class="customer-card">
+            <div class="customer-name">NVIDIA</div>
+            <div class="customer-type">
+              <span class="cn-text">早期采用者</span>
+              <span class="en-text">Early Adopter</span>
+            </div>
+            <div class="customer-result">
+              <span class="cn-text">认可心智模型方法有效性</span>
+              <span class="en-text">Validated mental model approach</span>
+            </div>
+          </div>
+          <div class="customer-card">
+            <div class="customer-name">Qualcomm</div>
+            <div class="customer-type">
+              <span class="cn-text">评估中</span>
+              <span class="en-text">Evaluation</span>
+            </div>
+            <div class="customer-result">
+              <span class="cn-text">早期效果显著</span>
+              <span class="en-text">Significant early results</span>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin: 2rem 0 1rem; color: var(--accent-cyan);">
+          <span class="cn-text">技术集成</span>
+          <span class="en-text">Technology Integrations</span>
+        </h3>
+
+        <div class="overview-grid">
+          <div class="stat-item">
+            <div class="stat-value" style="font-size: 1.2rem;">Cadence Xcelium</div>
+            <div class="stat-label">
+              <span class="cn-text">逻辑仿真器</span>
+              <span class="en-text">Logic Simulator</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" style="font-size: 1.2rem;">Cadence Jasper</div>
+            <div class="stat-label">
+              <span class="cn-text">形式验证平台</span>
+              <span class="en-text">Formal Verification</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" style="font-size: 1.2rem;">NVIDIA NeMo</div>
+            <div class="stat-label">
+              <span class="cn-text">Nemotron模型</span>
+              <span class="en-text">Nemotron Models</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" style="font-size: 1.2rem;">OpenAI GPT</div>
+            <div class="stat-label">
+              <span class="cn-text">云托管模型</span>
+              <span class="en-text">Cloud Models</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Links Section -->
+    <section class="glass-card">
+      <h2 class="section-title">
+        <span class="cn-text">相关链接</span>
+        <span class="en-text">Related Links</span>
+      </h2>
+      <div class="links-grid">
+        <a href="https://www.cadence.com/" target="_blank" class="link-item">
+          <span class="link-icon">🔗</span>
+          <div>
+            <div class="link-text">Cadence Design Systems</div>
+            <div class="link-type">
+              <span class="cn-text">官方收购方</span>
+              <span class="en-text">Acquirer</span>
+            </div>
+          </div>
+        </a>
+        <a href="https://scholar.google.com/citations?user=NlRHHYkAAAAJ" target="_blank" class="link-item">
+          <span class="link-icon">📚</span>
+          <div>
+            <div class="link-text">Google Scholar</div>
+            <div class="link-type">Kartik Hegde</div>
+          </div>
+        </a>
+        <a href="https://www.ai2incubator.com/" target="_blank" class="link-item">
+          <span class="link-icon">🔗</span>
+          <div>
+            <div class="link-text">AI2 Incubator</div>
+            <div class="link-type">
+              <span class="cn-text">孵化器</span>
+              <span class="en-text">Incubator</span>
+            </div>
+          </div>
+        </a>
+        <a href="https://www.geekwire.com/" target="_blank" class="link-item">
+          <span class="link-icon">🔗</span>
+          <div>
+            <div class="link-text">GeekWire</div>
+            <div class="link-type">
+              <span class="cn-text">科技新闻</span>
+              <span class="en-text">Tech News</span>
+            </div>
+          </div>
+        </a>
+      </div>
+    </section>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>
+      <span class="cn-text">ChipStack 深度技术调研报告 | 数据来源: 公开新闻报道、学术论文、专利数据库</span>
+      <span class="en-text">ChipStack Deep Tech Research | Sources: Public news, academic papers, patent databases</span>
+    </p>
+    <p style="margin-top: 0.5rem; font-size: 0.85rem;">
+      <span class="cn-text">最后更新: 2026年2月</span>
+      <span class="en-text">Last Updated: February 2026</span>
+    </p>
+  </footer>
+
+  <script src="assets/charts.js"></script>
+  <script>
+    // Language Toggle
+    function toggleLanguage() {
+      document.body.classList.toggle('show-en');
+    }
+
+    // Section Navigation
+    function showSection(sectionId) {
+      // Hide all sections
+      document.querySelectorAll('.section-content').forEach(section => {
+        section.classList.remove('active');
+      });
+      // Show selected section
+      document.getElementById('section-' + sectionId).classList.add('active');
+
+      // Update nav tabs
+      document.querySelectorAll('.nav-tab').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      event.target.closest('.nav-tab').classList.add('active');
+
+      // Initialize charts for the section if needed (only once per chart)
+      if (sectionId === 'academic') {
+        setTimeout(() => {
+          if (typeof initAcademicChart === 'function') initAcademicChart();
+          if (typeof initSkillsRadar === 'function') initSkillsRadar();
+          if (typeof initAnimatedCounters === 'function') initAnimatedCounters();
+        }, 100);
+      } else if (sectionId === 'overview') {
+        setTimeout(() => {
+          if (typeof initCustomerChart === 'function') initCustomerChart();
+        }, 100);
+      }
+    }
+
+    // Timeline Toggle
+    function toggleTimeline(element) {
+      element.classList.toggle('active');
+    }
+
+    // Intersection Observer for animations
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.style.opacity = '1';
+          entry.target.style.transform = 'translateY(0)';
+        }
+      });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.glass-card').forEach(card => {
+      card.style.opacity = '0';
+      card.style.transform = 'translateY(30px)';
+      card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+      observer.observe(card);
+    });
+  </script>
+</body>
+</html>

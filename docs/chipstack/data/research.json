@@ -1,0 +1,190 @@
+{
+  "company": {
+    "name": "ChipStack",
+    "name_cn": "芯片堆叠",
+    "founded": "2023",
+    "headquarters": "Seattle, USA",
+    "headquarters_cn": "美国西雅图",
+    "acquired_by": "Cadence Design Systems",
+    "acquired_date": "November 2025",
+    "acquired_date_cn": "2025年11月",
+    "team_size": "~20",
+    "funding": "$7M+",
+    "status": "Acquired",
+    "status_cn": "已被收购"
+  },
+  "founders": [
+    {
+      "name": "Kartik Hegde",
+      "title": "CEO & Co-founder",
+      "title_cn": "首席执行官 & 联合创始人",
+      "education": "Ph.D. in Computer Science, University of Illinois (2022)",
+      "education_cn": "伊利诺伊大学计算机科学博士 (2022)",
+      "background": ["Meta", "NVIDIA"],
+      "background_cn": ["Meta实习", "NVIDIA工作"]
+    },
+    {
+      "name": "Hamid Shojaei",
+      "title": "CTO & Co-founder",
+      "title_cn": "首席技术官 & 联合创始人",
+      "education": "Industry Veteran",
+      "education_cn": "行业资深专家",
+      "background": ["Lightmatter", "Google", "Qualcomm"],
+      "background_cn": ["Lightmatter", "谷歌", "高通"]
+    }
+  ],
+  "investors": [
+    { "name": "AI2 Incubator", "type": "Incubator", "location": "Seattle" },
+    { "name": "Khosla Ventures", "type": "VC", "location": "Menlo Park" },
+    { "name": "Cerberus Capital Management", "type": "PE", "location": "New York" },
+    { "name": "Clear Ventures", "type": "VC", "location": "Palo Alto" }
+  ],
+  "technology": {
+    "name": "Five-Agent Suite",
+    "name_cn": "五智能体套件",
+    "agents": [
+      {
+        "name": "Design Intent Agent",
+        "name_cn": "设计意图智能体",
+        "description": "Infers design intent from RTL code or specifications",
+        "description_cn": "从RTL代码或规范中推断设计意图"
+      },
+      {
+        "name": "Test Planning Agent",
+        "name_cn": "测试规划智能体",
+        "description": "Guided test plan creation",
+        "description_cn": "引导式测试计划创建"
+      },
+      {
+        "name": "Testbench Agent",
+        "name_cn": "测试平台智能体",
+        "description": "Automated testbench generation and updates",
+        "description_cn": "自动化测试平台生成和更新"
+      },
+      {
+        "name": "Verification Agent",
+        "name_cn": "验证智能体",
+        "description": "Verification tool execution, formal verification, unit simulation, UVM",
+        "description_cn": "验证工具执行、形式验证、单元仿真、UVM"
+      },
+      {
+        "name": "Debug Agent",
+        "name_cn": "调试智能体",
+        "description": "Intelligent debug assistance",
+        "description_cn": "智能调试辅助"
+      }
+    ],
+    "features": [
+      {
+        "name": "Natural Language Interface",
+        "name_cn": "自然语言界面",
+        "description": "Engineers can control the entire flow using natural language",
+        "description_cn": "工程师可使用自然语言控制整个流程"
+      },
+      {
+        "name": "Design Intent Mental Model",
+        "name_cn": "设计意图心智模型",
+        "description": "Understands what the design is supposed to do",
+        "description_cn": "理解设计应该做什么"
+      },
+      {
+        "name": "Full Verification Coverage",
+        "name_cn": "全验证覆盖",
+        "description": "Formal verification, unit simulation, UVM, functional coverage",
+        "description_cn": "形式验证、单元仿真、UVM、功能覆盖率"
+      }
+    ],
+    "integrations": [
+      "Cadence Xcelium Logic Simulator",
+      "Cadence Jasper Formal Verification",
+      "NVIDIA NeMo / Nemotron Models",
+      "OpenAI GPT Cloud Models"
+    ],
+    "efficiency": {
+      "unit_verification_time": "Weeks to Days",
+      "unit_verification_time_cn": "数周到数天",
+      "efficiency_gain": "Up to 10x",
+      "efficiency_gain_cn": "最高10倍"
+    }
+  },
+  "customers": [
+    {
+      "name": "Altera",
+      "result": "~10x reduction in verification effort",
+      "result_cn": "验证工作量降低约10倍",
+      "type": "Production"
+    },
+    {
+      "name": "Tenstorrent",
+      "result": "Up to 4x faster verification time",
+      "result_cn": "验证时间缩短高达4倍",
+      "type": "Production"
+    },
+    {
+      "name": "NVIDIA",
+      "result": "Early deployment, validated mental model approach",
+      "result_cn": "早期部署，认可心智模型方法",
+      "type": "Early Adopter"
+    },
+    {
+      "name": "Qualcomm",
+      "result": "Early evaluation with significant results",
+      "result_cn": "早期评估，效果显著",
+      "type": "Evaluation"
+    }
+  ],
+  "timeline": [
+    {
+      "year": "2023",
+      "event": "Company Founded",
+      "event_cn": "公司成立",
+      "description": "ChipStack was founded in Seattle by Kartik Hegde and Hamid Shojaei",
+      "description_cn": "ChipStack由Kartik Hegde和Hamid Shojaei在西雅图创立"
+    },
+    {
+      "year": "2024",
+      "event": "Seed Funding",
+      "event_cn": "种子轮融资",
+      "description": "Raised $7M+ from AI2 Incubator, Khosla Ventures, and other investors",
+      "description_cn": "从AI2孵化器、Khosla Ventures等投资者处获得超过700万美元融资"
+    },
+    {
+      "year": "2024-2025",
+      "event": "Product Development",
+      "event_cn": "产品开发",
+      "description": "Developed Five-Agent Suite with early customers including Altera, Tenstorrent, NVIDIA",
+      "description_cn": "开发五智能体套件，早期客户包括Altera、Tenstorrent、NVIDIA"
+    },
+    {
+      "year": "2025",
+      "event": "Acquired by Cadence",
+      "event_cn": "被Cadence收购",
+      "description": "Acquired by Cadence Design Systems, team joins San Jose headquarters",
+      "description_cn": "被Cadence Design Systems收购，团队加入圣何塞总部"
+    },
+    {
+      "year": "2026",
+      "event": "Product Integration",
+      "event_cn": "产品集成",
+      "description": "Technology integrated into Cadence verification suite",
+      "description_cn": "技术集成到Cadence验证套件中"
+    }
+  ],
+  "links": [
+    {
+      "title": "Cadence Acquisition Announcement",
+      "url": "https://www.cadence.com/",
+      "type": "Official"
+    },
+    {
+      "title": "AI2 Incubator Portfolio",
+      "url": "https://www.ai2incubator.com/",
+      "type": "Investor"
+    },
+    {
+      "title": "GeekWire News Coverage",
+      "url": "https://www.geekwire.com/",
+      "type": "News"
+    }
+  ]
+}

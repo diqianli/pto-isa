@@ -1,0 +1,141 @@
+{
+  "chipstack_patents": {
+    "status": "No public patents found",
+    "status_cn": "暂无公开专利",
+    "reason": "Company founded in 2023, patents typically take 1-3 years to become public",
+    "reason_cn": "公司成立于2023年，专利申请通常需要1-3年才公开",
+    "ip_ownership": {
+      "current_owner": "Cadence Design Systems",
+      "current_owner_cn": "Cadence Design Systems",
+      "transfer_date": "November 2025",
+      "transfer_date_cn": "2025年11月"
+    }
+  },
+  "industry_patent_trends": [
+    {
+      "company": "Moore Threads",
+      "company_cn": "摩尔线程",
+      "patent_id": "CN121387651A",
+      "date": "2025.10",
+      "title": "Chip Verification Method",
+      "title_cn": "芯片验证方法",
+      "category": "Verification"
+    },
+    {
+      "company": "Biren Technology",
+      "company_cn": "壁仞科技",
+      "patent_id": "CN121234843A",
+      "date": "2025.11",
+      "title": "AI Chip Pre-silicon Verification Method",
+      "title_cn": "AI芯片预硅验证方法",
+      "category": "Verification"
+    },
+    {
+      "company": "Intel",
+      "company_cn": "英特尔",
+      "patent_id": "CN120145978A",
+      "date": "2024.11",
+      "title": "AI Technology for SoC Layout Thermal Performance Optimization",
+      "title_cn": "AI技术在SoC布局热性能优化",
+      "category": "Physical Design"
+    }
+  ],
+  "technology_direction_patents": {
+    "categories": [
+      {
+        "name": "AI-driven Verification Workflow Automation",
+        "name_cn": "AI驱动验证工作流自动化",
+        "activity_level": "High",
+        "key_players": ["Cadence", "Synopsys", "Siemens"]
+      },
+      {
+        "name": "Design Intent Understanding",
+        "name_cn": "设计意图理解",
+        "activity_level": "Medium-High",
+        "key_players": ["Academic research", "EDA vendors"]
+      },
+      {
+        "name": "Multi-agent Verification Systems",
+        "name_cn": "多智能体验证系统",
+        "activity_level": "Emerging",
+        "key_players": ["ChipStack/Cadence", "Startups"]
+      },
+      {
+        "name": "Natural Language Interface for EDA",
+        "name_cn": "EDA自然语言接口",
+        "activity_level": "Emerging",
+        "key_players": ["ChipStack/Cadence", "Research labs"]
+      },
+      {
+        "name": "Intelligent Test Generation",
+        "name_cn": "智能测试生成",
+        "activity_level": "High",
+        "key_players": ["All major EDA vendors"]
+      }
+    ]
+  },
+  "patentability_analysis": {
+    "chipstack_innovations": [
+      {
+        "innovation": "Five-Agent Verification Architecture",
+        "innovation_cn": "五智能体验证架构",
+        "patent_potential": "High",
+        "rationale": "Novel multi-agent approach with specific agent roles",
+        "rationale_cn": "新颖的多智能体方法，具有特定的智能体角色"
+      },
+      {
+        "innovation": "Design Intent Mental Model",
+        "innovation_cn": "设计意图心智模型",
+        "patent_potential": "High",
+        "rationale": "Unique approach to understanding design specifications",
+        "rationale_cn": "理解设计规范的独特方法"
+      },
+      {
+        "innovation": "Natural Language Verification Control",
+        "innovation_cn": "自然语言验证控制",
+        "patent_potential": "Medium-High",
+        "rationale": "Integration of LLMs with EDA workflows",
+        "rationale_cn": "LLM与EDA工作流的集成"
+      },
+      {
+        "innovation": "Automated Testbench Generation with Design Context",
+        "innovation_cn": "带设计上下文的自动化测试平台生成",
+        "patent_potential": "Medium",
+        "rationale": "Enhanced by design intent understanding",
+        "rationale_cn": "通过设计意图理解增强"
+      }
+    ]
+  },
+  "competitive_landscape": {
+    "major_players": [
+      {
+        "name": "Cadence Design Systems",
+        "name_cn": "Cadence设计系统",
+        "patent_portfolio": "Extensive (1000+ EDA patents)",
+        "focus": "Full EDA stack, AI integration",
+        "focus_cn": "完整EDA堆栈，AI集成"
+      },
+      {
+        "name": "Synopsys",
+        "name_cn": "新思科技",
+        "patent_portfolio": "Extensive (1000+ EDA patents)",
+        "focus": "AI-driven verification, DSO.ai",
+        "focus_cn": "AI驱动验证，DSO.ai"
+      },
+      {
+        "name": "Siemens EDA (Mentor)",
+        "name_cn": "西门子EDA (Mentor)",
+        "patent_portfolio": "Large",
+        "focus": "Verification, PCB design",
+        "focus_cn": "验证，PCB设计"
+      }
+    ],
+    "startup_competition": [
+      {
+        "name": "Various AI-EDA startups",
+        "focus": "Point solutions in verification, physical design",
+        "focus_cn": "验证、物理设计中的点解决方案"
+      }
+    ]
+  }
+}

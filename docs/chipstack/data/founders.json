@@ -1,0 +1,185 @@
+{
+  "founders": [
+    {
+      "name": "Kartik Hegde",
+      "name_cn": "卡蒂克·赫格德",
+      "title": "CEO & Co-founder",
+      "title_cn": "首席执行官 & 联合创始人",
+      "education": {
+        "phd": {
+          "institution": "University of Illinois Urbana-Champaign (UIUC)",
+          "institution_cn": "伊利诺伊大学香槟分校",
+          "degree": "Ph.D. in Computer Science",
+          "degree_cn": "计算机科学博士",
+          "year": "2022",
+          "advisor": "Christopher Fletcher",
+          "advisor_cn": "克里斯托弗·弗莱彻",
+          "advisor_current": "UC Berkeley Professor",
+          "advisor_current_cn": "现任UC Berkeley教授"
+        },
+        "undergraduate": {
+          "institution": "National Institute of Technology Karnataka (NITK)",
+          "institution_cn": "印度国立技术学院卡纳塔克分校",
+          "degree": "BTech",
+          "year": "2015"
+        }
+      },
+      "academic_metrics": {
+        "google_scholar": "https://scholar.google.com/citations?user=NlRHHYkAAAAJ",
+        "citations": "1,044,867+",
+        "h_index": 77,
+        "i10_index": 66
+      },
+      "career": {
+        "meta": {
+          "role": "Research Intern",
+          "role_cn": "研究实习生",
+          "period": "2019",
+          "focus": "AI/ML systems research"
+        },
+        "nvidia": {
+          "role": "Researcher",
+          "role_cn": "研究员",
+          "focus": "GPU computing, deep learning acceleration"
+        }
+      },
+      "honors": [
+        {
+          "name": "Facebook Fellowship",
+          "name_cn": "Facebook奖学金",
+          "year": "2019",
+          "description": "For research in deep learning acceleration for mobile and IoT devices",
+          "description_cn": "表彰其在移动和IoT设备深度学习加速方面的研究"
+        }
+      ],
+      "research_areas": [
+        "Computer Architecture",
+        "Machine Learning Accelerators",
+        "Hardware Verification (AI-driven)",
+        "Efficient Deep Neural Network Acceleration",
+        "Low-power Chip Design"
+      ],
+      "research_areas_cn": [
+        "计算机体系结构",
+        "机器学习加速器",
+        "硬件验证 (AI驱动方法)",
+        "高效深度神经网络加速",
+        "低功耗芯片设计"
+      ],
+      "representative_papers": [
+        {
+          "title": "UCNN: Exploiting Computational Reuse in Deep Neural Networks via Weight Repression",
+          "conference": "ISCA 2018",
+          "description": "Proposed exploiting weight repetition in neural networks to reduce computation",
+          "description_cn": "提出利用神经网络权重重复减少计算量",
+          "collaborators": ["Jiyong Yu", "Rohit Agrawal", "Mengjia Yan", "Michael Pellauer (NVIDIA)", "Christopher Fletcher"]
+        },
+        {
+          "title": "Accelerating Sparse Data Orchestration via Dynamic Reflexive Tiling",
+          "conference": "ASPLOS 2023",
+          "description": "Dynamic tiling approach for sparse data processing",
+          "description_cn": "稀疏数据处理的动态分块方法",
+          "collaborators": ["UIUC", "NVIDIA", "MIT", "UC Davis researchers"]
+        }
+      ]
+    },
+    {
+      "name": "Hamid Shojaei",
+      "name_cn": "哈米德·肖贾伊",
+      "title": "CTO & Co-founder",
+      "title_cn": "首席技术官 & 联合创始人",
+      "education": {
+        "description": "Industry Veteran with extensive hardware design experience",
+        "description_cn": "行业资深专家，拥有丰富的硬件设计经验"
+      },
+      "career": {
+        "google": {
+          "role": "Founding Member, TPU Team",
+          "role_cn": "TPU团队创始成员",
+          "period": "Early TPU development",
+          "contributions": [
+            "Foundational contributions to Google AI accelerator platform",
+            "Supported AlphaGo and other ML projects",
+            "Custom AI chip design for machine learning workloads"
+          ],
+          "contributions_cn": [
+            "对Google AI加速器平台有奠基性贡献",
+            "参与AlphaGo等项目支持",
+            "专门为机器学习工作负载设计定制AI芯片"
+          ]
+        },
+        "lightmatter": {
+          "role": "Senior Technical Position",
+          "role_cn": "高级技术职位",
+          "company_valuation": "$4.4B (2024 Series D)",
+          "contributions": [
+            "Silicon photonics AI acceleration technology",
+            "Passage platform high-speed optical interconnects",
+            "Envise optical AI accelerator chip"
+          ],
+          "contributions_cn": [
+            "参与硅光子学AI加速技术开发",
+            "Passage平台高速光互连",
+            "Envise光学AI加速器芯片"
+          ]
+        },
+        "qualcomm": {
+          "role": "Chip Design & Verification",
+          "role_cn": "芯片设计与验证",
+          "contributions": [
+            "Chip design and verification work",
+            "Snapdragon series chips or SoC design"
+          ],
+          "contributions_cn": [
+            "芯片设计和验证工作",
+            "Snapdragon系列芯片或SoC设计"
+          ]
+        }
+      },
+      "expertise": [
+        "ASIC Design & Verification",
+        "AI/ML Hardware Acceleration",
+        "Silicon Photonics",
+        "System-on-Chip Design",
+        "Generative AI Chip Design Workflow"
+      ],
+      "expertise_cn": [
+        "ASIC设计与验证",
+        "AI/ML硬件加速",
+        "硅光子学",
+        "系统级芯片设计",
+        "生成式AI芯片设计工作流"
+      ]
+    }
+  ],
+  "technical_synergy": {
+    "description": "The combination of Kartik's academic research in neural network acceleration and Hamid's industry experience in AI accelerator design created a unique foundation for ChipStack's AI-driven verification approach.",
+    "description_cn": "Kartik在神经网络加速方面的学术研究与Hamid在AI加速器设计方面的行业经验的结合，为ChipStack的AI驱动验证方法奠定了独特的基础。",
+    "key_combinations": [
+      {
+        "source": "Google TPU Experience (Hamid)",
+        "source_cn": "Google TPU经验 (Hamid)",
+        "application": "Understanding chip verification pain points",
+        "application_cn": "理解芯片验证痛点"
+      },
+      {
+        "source": "Lightmatter (Emerging Computing Architecture)",
+        "source_cn": "Lightmatter (新兴计算架构)",
+        "application": "Innovative thinking methodology",
+        "application_cn": "创新思维方法"
+      },
+      {
+        "source": "UIUC Research (Neural Network Optimization)",
+        "source_cn": "UIUC研究 (神经网络优化)",
+        "application": "AI model optimization for verification",
+        "application_cn": "AI模型优化应用"
+      },
+      {
+        "source": "Meta/NVIDIA Internships (Industry Experience)",
+        "source_cn": "Meta/NVIDIA实习 (工业界经验)",
+        "application": "Product development capabilities",
+        "application_cn": "产品化能力"
+      }
+    ]
+  }
+}

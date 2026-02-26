@@ -1,0 +1,216 @@
+{
+  "timeline": [
+    {
+      "date": "2015",
+      "date_cn": "2015年",
+      "category": "education",
+      "category_cn": "教育",
+      "event": "Kartik Hegde graduates from NITK with BTech",
+      "event_cn": "Kartik Hegde从NITK毕业获得BTech学位",
+      "person": "Kartik Hegde"
+    },
+    {
+      "date": "2016",
+      "date_cn": "2016年",
+      "category": "education",
+      "category_cn": "教育",
+      "event": "Kartik Hegde begins Ph.D. at UIUC under Christopher Fletcher",
+      "event_cn": "Kartik Hegde开始在UIUC攻读博士学位，导师Christopher Fletcher",
+      "person": "Kartik Hegde"
+    },
+    {
+      "date": "2018",
+      "date_cn": "2018年",
+      "category": "research",
+      "category_cn": "研究",
+      "event": "UCNN paper published at ISCA - weight repression in neural networks",
+      "event_cn": "UCNN论文发表于ISCA - 神经网络权重压缩",
+      "person": "Kartik Hegde"
+    },
+    {
+      "date": "2019",
+      "date_cn": "2019年",
+      "category": "honor",
+      "category_cn": "荣誉",
+      "event": "Kartik Hegde receives Facebook Fellowship",
+      "event_cn": "Kartik Hegde获得Facebook奖学金",
+      "person": "Kartik Hegde"
+    },
+    {
+      "date": "2019",
+      "date_cn": "2019年",
+      "category": "career",
+      "category_cn": "职业",
+      "event": "Kartik Hegde interns at Meta Research",
+      "event_cn": "Kartik Hegde在Meta Research实习",
+      "person": "Kartik Hegde"
+    },
+    {
+      "date": "Early 2010s",
+      "date_cn": "2010年代初",
+      "category": "career",
+      "category_cn": "职业",
+      "event": "Hamid Shojaei joins Google TPU team as founding member",
+      "event_cn": "Hamid Shojaei作为创始成员加入Google TPU团队",
+      "person": "Hamid Shojaei"
+    },
+    {
+      "date": "2010s",
+      "date_cn": "2010年代",
+      "category": "career",
+      "category_cn": "职业",
+      "event": "Hamid Shojaei works at Qualcomm on chip design",
+      "event_cn": "Hamid Shojaei在高通从事芯片设计工作",
+      "person": "Hamid Shojaei"
+    },
+    {
+      "date": "2018-2020",
+      "date_cn": "2018-2020年",
+      "category": "career",
+      "category_cn": "职业",
+      "event": "Hamid Shojaei at Lightmatter (silicon photonics)",
+      "event_cn": "Hamid Shojaei在Lightmatter工作（硅光子学）",
+      "person": "Hamid Shojaei"
+    },
+    {
+      "date": "2022",
+      "date_cn": "2022年",
+      "category": "education",
+      "category_cn": "教育",
+      "event": "Kartik Hegde completes Ph.D. at UIUC",
+      "event_cn": "Kartik Hegde完成UIUC博士学位",
+      "person": "Kartik Hegde"
+    },
+    {
+      "date": "2023",
+      "date_cn": "2023年",
+      "category": "company",
+      "category_cn": "公司",
+      "event": "ChipStack founded in Seattle by Kartik Hegde and Hamid Shojaei",
+      "event_cn": "ChipStack由Kartik Hegde和Hamid Shojaei在西雅图创立"
+    },
+    {
+      "date": "2023",
+      "date_cn": "2023年",
+      "category": "funding",
+      "category_cn": "融资",
+      "event": "ChipStack joins AI2 Incubator program",
+      "event_cn": "ChipStack加入AI2孵化器项目"
+    },
+    {
+      "date": "2024",
+      "date_cn": "2024年",
+      "category": "funding",
+      "category_cn": "融资",
+      "event": "Seed funding: $7M+ from AI2, Khosla Ventures, Cerberus, Clear Ventures",
+      "event_cn": "种子轮融资：从AI2、Khosla Ventures、Cerberus、Clear Ventures获得超过700万美元"
+    },
+    {
+      "date": "2024",
+      "date_cn": "2024年",
+      "category": "product",
+      "category_cn": "产品",
+      "event": "Five-Agent Suite development with early customers (Altera, Tenstorrent, NVIDIA)",
+      "event_cn": "五智能体套件开发，早期客户包括Altera、Tenstorrent、NVIDIA"
+    },
+    {
+      "date": "2024-2025",
+      "date_cn": "2024-2025年",
+      "category": "customer",
+      "category_cn": "客户",
+      "event": "Production deployment at Altera and Tenstorrent",
+      "event_cn": "Altera和Tenstorrent生产环境部署"
+    },
+    {
+      "date": "2025-11-10",
+      "date_cn": "2025年11月10日",
+      "category": "acquisition",
+      "category_cn": "收购",
+      "event": "Cadence Design Systems acquires ChipStack (~$700M valuation)",
+      "event_cn": "Cadence Design Systems收购ChipStack（估值约7亿美元）"
+    },
+    {
+      "date": "2025-11",
+      "date_cn": "2025年11月",
+      "category": "integration",
+      "category_cn": "整合",
+      "event": "~20-person ChipStack team joins Cadence San Jose headquarters",
+      "event_cn": "约20人ChipStack团队加入Cadence圣何塞总部"
+    },
+    {
+      "date": "2026-02-10",
+      "date_cn": "2026年2月10日",
+      "category": "product",
+      "category_cn": "产品",
+      "event": "Cadence launches ChipStack AI Super Agent",
+      "event_cn": "Cadence发布ChipStack AI Super Agent"
+    }
+  ],
+  "product_releases": [
+    {
+      "date": "2024",
+      "date_cn": "2024年",
+      "product": "Five-Agent Suite",
+      "product_cn": "五智能体套件",
+      "features": [
+        "Design Intent Agent",
+        "Test Planning Agent",
+        "Testbench Agent",
+        "Verification Agent",
+        "Debug Agent"
+      ]
+    },
+    {
+      "date": "2026-02-10",
+      "date_cn": "2026年2月10日",
+      "product": "ChipStack AI Super Agent",
+      "product_cn": "ChipStack AI超级代理",
+      "features": [
+        "World's first EDA AI Super Agent",
+        "10x coding efficiency improvement",
+        "Natural language interface",
+        "NVIDIA NeMo/Nemotron support",
+        "OpenAI GPT model support",
+        "End-to-end verification assistance"
+      ],
+      "features_cn": [
+        "全球首个EDA AI超级代理",
+        "设计和测试平台编码效率提升10倍",
+        "自然语言界面控制",
+        "支持NVIDIA NeMo/Nemotron模型",
+        "支持OpenAI GPT模型",
+        "端到端验证辅助"
+      ]
+    }
+  ],
+  "customer_results": [
+    {
+      "customer": "Altera",
+      "result": "~10x reduction in verification effort",
+      "result_cn": "验证工作量降低约10倍",
+      "deployment": "Production",
+      "deployment_cn": "生产环境"
+    },
+    {
+      "customer": "Tenstorrent",
+      "result": "4x faster verification time",
+      "result_cn": "验证时间缩短4倍",
+      "deployment": "Production",
+      "deployment_cn": "生产环境"
+    },
+    {
+      "customer": "NVIDIA",
+      "result": "Early deployment, validated approach",
+      "result_cn": "早期部署，验证方法有效性",
+      "deployment": "Early Adopter",
+      "deployment_cn": "早期采用者"
+    },
+    {
+      "customer": "Qualcomm",
+      "result": "Significant early results",
+      "result_cn": "早期效果显著",
+      "deployment": "Evaluation",
+      "deployment_cn": "评估中"
+    }
+  ]
+}
